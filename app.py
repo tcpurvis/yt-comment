@@ -211,38 +211,16 @@ def main():
         )
         return
 
-    # --- Sidebar ---
-    st.sidebar.header("Settings")
+    # --- Sidebar: Fetch settings ---
+    st.sidebar.header("Fetch Settings")
     max_scan = st.sidebar.number_input(
         "Comments to scan per video", min_value=100, max_value=250_000,
         value=5000, step=1000,
         help="How deep to search into each video's comments for keyword matches. "
              "Set high for viral videos with 200k+ comments.",
     )
-    no_match_limit = st.sidebar.checkbox(
-        "Return all matched comments (no limit)",
-        help="When checked, every keyword match is kept. "
-             "This can be slow and use more memory for very large result sets.",
-    )
-    if no_match_limit:
-        max_matches = float("inf")
-    else:
-        max_matches = st.sidebar.number_input(
-            "Max matched comments to return", min_value=10, max_value=10_000,
-            value=200, step=50,
-            help="Stop collecting once this many keyword-matched comments are found across all videos.",
-        )
 
-    st.sidebar.header("Multi-Language Search")
-    selected_langs = st.sidebar.multiselect(
-        "Also search in these languages",
-        options=list(SUPPORTED_LANGUAGES.keys()),
-        help="Keywords will be translated and used to search for comments in each selected language. "
-             "Matching comments will include a back-translation to English.",
-    )
-    selected_lang_codes = [SUPPORTED_LANGUAGES[n] for n in selected_langs]
-
-    # --- Main inputs ---
+    # --- Main inputs: video source ---
     input_mode = st.radio(
         "How do you want to find videos?",
         ["Paste video URLs", "Search YouTube"],
@@ -261,29 +239,6 @@ def main():
             placeholder="e.g. python tutorial",
         )
         max_videos = st.slider("Max videos to search", 1, 50, 10)
-
-    search_all = st.checkbox(
-        "Return all comments (skip keyword filter)",
-        help="Fetch every comment without filtering by keywords. "
-             "Useful when you want to analyze all discussion on specific videos.",
-    )
-
-    if not search_all:
-        keyword_input = st.text_input(
-            "Filter comments by keywords (comma-separated)",
-            placeholder="e.g. great, awesome, helpful",
-        )
-        keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
-
-        exclude_input = st.text_input(
-            "Exclude comments containing (comma-separated)",
-            placeholder="e.g. spam, subscribe, giveaway",
-            help="Comments matching any of these words will be excluded, even if they match the keywords above.",
-        )
-        exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
-    else:
-        keywords = []
-        exclude_keywords = []
 
     # --- Quota estimate ---
     if input_mode == "Paste video URLs":
@@ -362,16 +317,64 @@ def main():
     raw_comments = st.session_state["raw_comments"]
     sq = st.session_state["search_query"]
 
+    # ===================================================================
+    # PHASE 2: FILTER & ANALYZE — all inputs shown after fetch
+    # ===================================================================
     st.divider()
+    st.subheader("Filter & Analyze")
     st.caption(
         f"**{len(raw_comments):,}** cached comments available. "
-        "Change keywords, languages, or limits and re-analyze without re-fetching."
+        "Change filters and re-analyze without re-fetching."
     )
 
-    # ===================================================================
-    # PHASE 2: ANALYZE — local filtering, translation, sentiment, themes
-    # ===================================================================
-    if st.button("Apply Filters & Analyze"):
+    search_all = st.checkbox(
+        "Return all comments (skip keyword filter)",
+        help="Include every comment without keyword filtering. "
+             "Useful when you want to analyze all discussion on specific videos.",
+    )
+
+    if not search_all:
+        keyword_input = st.text_input(
+            "Filter comments by keywords (comma-separated)",
+            placeholder="e.g. great, awesome, helpful",
+        )
+        keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
+
+        exclude_input = st.text_input(
+            "Exclude comments containing (comma-separated)",
+            placeholder="e.g. spam, subscribe, giveaway",
+            help="Comments matching any of these words will be excluded.",
+        )
+        exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
+    else:
+        keywords = []
+        exclude_keywords = []
+
+    # --- Sidebar: analysis settings (only shown after fetch) ---
+    st.sidebar.header("Analysis Settings")
+    no_match_limit = st.sidebar.checkbox(
+        "Return all matched comments (no limit)",
+        help="When checked, every keyword match is kept.",
+    )
+    if no_match_limit:
+        max_matches = float("inf")
+    else:
+        max_matches = st.sidebar.number_input(
+            "Max matched comments to return", min_value=10, max_value=10_000,
+            value=200, step=50,
+            help="Cap the number of matched comments to analyze.",
+        )
+
+    st.sidebar.header("Multi-Language Search")
+    selected_langs = st.sidebar.multiselect(
+        "Also search in these languages",
+        options=list(SUPPORTED_LANGUAGES.keys()),
+        help="Keywords will be translated and matched against cached comments. "
+             "Matching comments will include a back-translation to English.",
+    )
+    selected_lang_codes = [SUPPORTED_LANGUAGES[n] for n in selected_langs]
+
+    if st.button("Apply Filters & Analyze", type="primary"):
         if not search_all and not keywords:
             st.warning("Enter at least one keyword or check 'Return all comments'.")
             return
