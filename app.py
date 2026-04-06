@@ -46,10 +46,11 @@ def generate_ai_summary(comments: list[dict], search_query: str) -> str:
         f"~{sentiment_counts['Neutral']} neutral, "
         f"-{sentiment_counts['Negative']} negative.\n\n"
         + "\n\n".join(theme_blocks)
-        + "\n\nWrite a concise summary (3-5 paragraphs) of the key themes and sentiment "
-        "patterns in these comments. What are people talking about? What's the overall "
-        "tone? Are there notable points of agreement or disagreement? "
-        "Be specific and reference the actual topics, not generic observations."
+        + "\n\nWrite a brief summary: one short paragraph (2-3 sentences) capturing "
+        "the overall tone and what people are talking about, followed by 3-5 bullet "
+        "points highlighting the most notable specific themes or patterns. "
+        "Be specific — reference actual topics from the comments, not generic observations. "
+        "Use markdown formatting (- for bullets)."
     )
 
     try:
