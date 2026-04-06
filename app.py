@@ -556,7 +556,19 @@ def main():
     sq = st.session_state["search_query"]
 
     # --- Download raw export ---
-    st.divider()
+    _rainbow_bar = (
+        '<div style="display:flex;width:100%;height:3px;overflow:hidden;">'
+        '<div style="flex:1;background:#00BCE7;"></div>'
+        '<div style="flex:1;background:#E64783;"></div>'
+        '<div style="flex:1;background:#1CE8B5;"></div>'
+        '<div style="flex:1;background:#C94EFF;"></div>'
+        '<div style="flex:1;background:#FFD93D;"></div>'
+        '<div style="flex:1;background:#FF5E5B;"></div>'
+        '<div style="flex:1;background:#CCF913;"></div>'
+        '<div style="flex:1;background:#FF9500;"></div>'
+        '</div>'
+    )
+    st.html(_rainbow_bar)
     from datetime import datetime
     _export_ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     _video_titles = sorted(set(c.get("video_title", "") for c in raw_comments if c.get("video_title")))
