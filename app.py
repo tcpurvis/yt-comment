@@ -464,18 +464,6 @@ def main():
 
     # --- Sidebar: analysis settings (only shown after fetch) ---
     st.sidebar.header("Analysis Settings")
-    no_match_limit = st.sidebar.checkbox(
-        "Return all matched comments (no limit)",
-        help="When checked, every keyword match is kept.",
-    )
-    if no_match_limit:
-        max_matches = float("inf")
-    else:
-        max_matches = st.sidebar.number_input(
-            "Max matched comments to return", min_value=10, max_value=10_000,
-            value=200, step=50,
-            help="Cap the number of matched comments to analyze.",
-        )
 
     st.sidebar.header("Multi-Language Search")
     selected_langs = st.sidebar.multiselect(
@@ -564,9 +552,6 @@ def main():
                         copy["_needs_bt"] = plan_lang
                     matched.append(copy)
                     break
-
-        if not no_match_limit and len(matched) > max_matches:
-            matched = matched[: int(max_matches)]
 
         if not matched:
             status.update(label="No comments matched.", state="error")
