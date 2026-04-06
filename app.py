@@ -379,11 +379,29 @@ def main():
     # --- Main inputs: video source ---
     input_mode = st.radio(
         "How do you want to find videos?",
-        ["Paste video URLs", "Upload previous export"],
+        ["Paste video URLs", "Upload previous export", "Update existing export"],
         horizontal=True,
     )
 
-    if input_mode == "Upload previous export":
+    if input_mode == "Update existing export":
+        st.caption("Upload a previous export and fetch only new comments posted since the last pull.")
+        update_col1, update_col2 = st.columns(2)
+        with update_col1:
+            update_file = st.file_uploader(
+                "Upload your latest export",
+                type=["json"],
+                key="update_upload",
+                help="The tool will find the most recent comment date and only fetch newer comments.",
+            )
+        with update_col2:
+            update_url = st.text_area(
+                "Video URL(s) to update (one per line)",
+                placeholder="https://www.youtube.com/watch?v=...",
+                height=100,
+                key="update_url",
+            )
+
+    elif input_mode == "Upload previous export":
         uploaded = st.file_uploader(
             "Upload a comments JSON export",
             type=["json"],
@@ -445,7 +463,7 @@ def main():
     # ===================================================================
     # PHASE 1: FETCH — hits the API, stores raw comments in session state
     # ===================================================================
-    if input_mode != "Upload previous export":
+    if input_mode not in ("Upload previous export", "Update existing export"):
         # Fetch settings
         fetch_col1, fetch_col2 = st.columns(2)
         with fetch_col1:
@@ -469,7 +487,7 @@ def main():
             )
 
     # Quota estimate (inline, only for fetch modes)
-    if input_mode != "Upload previous export":
+    if input_mode not in ("Upload previous export", "Update existing export"):
         _est_videos = len(extract_video_ids(url_input)) if url_input.strip() else 1
 
         if fetch_all:
@@ -486,6 +504,128 @@ def main():
 
     if input_mode == "Upload previous export":
         pass  # Upload handled above, no fetch needed
+    elif input_mode == "Update existing export":
+        if st.button("Fetch New Comments", type="primary"):
+            if not update_file or not update_url or not update_url.strip():
+                st.warning("Please upload an export file and provide at least one video URL.")
+            else:
+                from googleapiclient.errors import HttpError
+                from datetime import datetime as _dt_u
+
+                # Load existing comments
+                try:
+                    existing_data = json.loads(update_file.read())
+                    existing_comments = existing_data.get("comments", [])
+                except Exception as e:
+                    st.error(f"Failed to read export file: {e}")
+                    existing_comments = []
+
+                if not existing_comments:
+                    st.error("Export file contains no comments.")
+                else:
+                    # Find the latest comment date and existing IDs
+                    existing_ids = set()
+                    latest_date = ""
+                    for c in existing_comments:
+                        cid = c.get("comment_id", "")
+                        if cid:
+                            existing_ids.add(cid)
+                        if c.get("date", "") > latest_date:
+                            latest_date = c["date"]
+
+                    st.info(f"Loaded **{len(existing_comments):,}** existing comments. "
+                            f"Latest comment: **{latest_date[:10]}**. Fetching newer comments...")
+
+                    youtube = get_youtube_client(api_key)
+                    video_ids = extract_video_ids(update_url)
+                    if not video_ids:
+                        st.warning("No valid video URLs found.")
+                    else:
+                        try:
+                            videos = get_video_info(youtube, video_ids)
+                        except HttpError as e:
+                            reason = e.error_details[0]["reason"] if e.error_details else str(e)
+                            st.error(f"YouTube API error: {reason}")
+                            videos = []
+
+                        if videos:
+                            new_comments: list[dict] = []
+                            status = st.status("Fetching new comments...", expanded=True)
+                            try:
+                                for video in videos:
+                                    counter = status.empty()
+                                    vid_label = video["title"][:50]
+
+                                    # Fetch with time sort (newest first), stop at cutoff
+                                    page_size = MAX_RESULTS_PER_PAGE
+                                    request = youtube.commentThreads().list(
+                                        part="snippet",
+                                        videoId=video["video_id"],
+                                        maxResults=page_size,
+                                        textFormat="plainText",
+                                        order="time",
+                                    )
+                                    hit_cutoff = False
+                                    while request and not hit_cutoff:
+                                        try:
+                                            response = _api_call_with_retry(request)
+                                        except Exception:
+                                            break
+                                        for item in response.get("items", []):
+                                            thread_id = item["snippet"]["topLevelComment"]["id"]
+                                            if thread_id in existing_ids:
+                                                continue
+                                            snippet = item["snippet"]["topLevelComment"]["snippet"]
+                                            comment_date = snippet["publishedAt"]
+                                            if comment_date <= latest_date:
+                                                hit_cutoff = True
+                                                break
+                                            new_comments.append({
+                                                "author": snippet["authorDisplayName"],
+                                                "comment": snippet["textDisplay"],
+                                                "likes": snippet["likeCount"],
+                                                "replies": item["snippet"]["totalReplyCount"],
+                                                "date": comment_date,
+                                                "video_id": video["video_id"],
+                                                "video_title": video["title"],
+                                                "is_reply": False,
+                                                "comment_id": thread_id,
+                                            })
+                                        counter.markdown(
+                                            f"**{vid_label}** — {len(new_comments):,} new comments found"
+                                        )
+                                        request = youtube.commentThreads().list_next(request, response)
+                            except HttpError as e:
+                                reason = e.error_details[0]["reason"] if e.error_details else str(e)
+                                status.write(f"API error: {reason}")
+
+                            # Merge: new comments + existing (deduped)
+                            merged = new_comments + existing_comments
+                            status.update(
+                                label=f"Found {len(new_comments):,} new comments. "
+                                      f"Total: {len(merged):,}.",
+                                state="complete", expanded=False,
+                            )
+
+                            # Restore session
+                            st.session_state["raw_comments"] = merged
+                            sq = ", ".join(v["title"] for v in videos)
+                            st.session_state["search_query"] = sq
+                            st.session_state.pop("analyzed_comments", None)
+                            st.session_state.pop("hidden_ids", None)
+
+                            # Restore analysis state from export if no new analysis needed
+                            if "analyzed_comments" in existing_data and not new_comments:
+                                st.session_state["analyzed_comments"] = existing_data["analyzed_comments"]
+                                st.session_state["hidden_ids"] = set(existing_data.get("hidden_ids", []))
+                                st.session_state["keywords"] = existing_data.get("keywords", [])
+
+                            st.success(
+                                f"Merged **{len(new_comments):,}** new + "
+                                f"**{len(existing_comments):,}** existing = "
+                                f"**{len(merged):,}** total comments."
+                            )
+
     elif st.button("Fetch Comments", type="primary"):
         from googleapiclient.errors import HttpError
 
