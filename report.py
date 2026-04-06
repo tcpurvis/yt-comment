@@ -267,78 +267,88 @@ def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
 
 
 def _safe(text: str) -> str:
-    """Sanitise text for fpdf (replace chars it can't encode in latin-1)."""
-    return text.encode("latin-1", "replace").decode("latin-1")
+    """Sanitise text for fpdf."""
+    return text
+
+
+import os as _os
+_FONT_DIR = _os.path.join(_os.path.dirname(__file__), "fonts")
 
 
 class _ReportPDF(FPDF):
-    def header(self):
-        self.set_font("Helvetica", "B", 10)
-        self.set_text_color(160, 160, 160)
-        self.cell(0, 6, "YouTube Comment Analysis", align="R", new_x="LMARGIN", new_y="NEXT")
-        self.ln(2)
-
     def footer(self):
         self.set_y(-15)
-        self.set_font("Helvetica", "", 8)
+        self.set_font("Lato", "", 8)
         self.set_text_color(160, 160, 160)
         self.cell(0, 10, f"Page {self.page_no()}/{{nb}}", align="C")
 
 
 def build_pdf_report(
     comments: list[dict], search_query: str, keywords: list[str],
-    ai_summary: str = "",
+    ai_summary: str = "", preset_name: str = "",
 ) -> bytes:
     """Build a styled PDF report grouped by sentiment."""
     sentiment_counts = get_sentiment_counts(comments)
     total = len(comments)
     now = datetime.now().strftime("%B %d, %Y at %I:%M %p")
-    kw_display = ", ".join(keywords) if keywords else "None"
     multi_video = len(set(c.get("video_title", "") for c in comments)) > 1
 
+    # Determine keyword display: preset name or keyword list
+    if preset_name and preset_name != "Custom":
+        kw_display = f"Preset: {preset_name}"
+    else:
+        kw_display = ", ".join(keywords) if keywords else "None"
+
+    # Video title for the main heading
+    video_titles = sorted(set(c.get("video_title", "") for c in comments if c.get("video_title")))
+    if len(video_titles) == 1:
+        main_title = video_titles[0]
+    elif video_titles:
+        main_title = f"{video_titles[0]} + {len(video_titles) - 1} more"
+    else:
+        main_title = search_query
+
     pdf = _ReportPDF()
+    # Register Lato font
+    pdf.add_font("Lato", "", _os.path.join(_FONT_DIR, "Lato-Regular.ttf"))
+    pdf.add_font("Lato", "B", _os.path.join(_FONT_DIR, "Lato-Bold.ttf"))
+    pdf.add_font("Lato", "I", _os.path.join(_FONT_DIR, "Lato-Italic.ttf"))
     pdf.alias_nb_pages()
     pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
 
-    # ---- Title ----
-    pdf.set_font("Helvetica", "B", 22)
+    # ---- Title: video name ----
+    pdf.set_font("Lato", "B", 20)
     pdf.set_text_color(26, 26, 26)
-    pdf.cell(0, 12, "YouTube Comment Analysis", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 10)
+    pdf.multi_cell(pdf.w - 20, 10, _safe(main_title), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Lato", "", 10)
     pdf.set_text_color(107, 114, 128)
-    pdf.cell(0, 6, f"Generated {now}", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, f"YouTube Comment Analysis  |  Generated {now}", align="C",
+             new_x="LMARGIN", new_y="NEXT")
     pdf.ln(8)
 
-    # ---- Summary box ----
+    # ---- Summary box (single tone) ----
     r, g, b = _hex_to_rgb("#5BC8F0")
     pdf.set_fill_color(r, g, b)
-    pdf.set_text_color(255, 255, 255)
     box_y = pdf.get_y()
     usable = pdf.w - 20
-    col_w = usable / 4
+    col_w = usable / 3
     box_h = 32
     pdf.rect(10, box_y, usable, box_h, "F")
 
-    # Also draw a subtle gradient overlay (lighter right half)
-    r2, g2, b2 = _hex_to_rgb("#A78BFA")
-    pdf.set_fill_color(r2, g2, b2)
-    pdf.rect(10 + usable / 2, box_y, usable / 2, box_h, "F")
-
     summary_items = [
-        ("SEARCH QUERY", _safe(search_query[:35])),
-        ("KEYWORDS", _safe(kw_display[:35])),
+        ("KEYWORDS", _safe(kw_display[:50])),
         ("TOTAL COMMENTS", str(total)),
         ("SENTIMENT", f"+{sentiment_counts['Positive']} ~{sentiment_counts['Neutral']} -{sentiment_counts['Negative']}"),
     ]
     for j, (lbl, val) in enumerate(summary_items):
         x = 14 + j * col_w
         pdf.set_xy(x, box_y + 5)
-        pdf.set_font("Helvetica", "", 7)
-        pdf.set_text_color(220, 220, 255)
+        pdf.set_font("Lato", "", 7)
+        pdf.set_text_color(255, 255, 255)
         pdf.cell(col_w - 4, 4, lbl, new_x="LMARGIN")
         pdf.set_xy(x, box_y + 12)
-        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_font("Lato", "B", 11)
         pdf.set_text_color(255, 255, 255)
         pdf.cell(col_w - 4, 8, val, new_x="LMARGIN")
 
@@ -346,32 +356,35 @@ def build_pdf_report(
 
     # ---- Overall sentiment section ----
     pdf.set_text_color(26, 26, 26)
-    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_font("Lato", "B", 13)
     pdf.cell(0, 8, "Overall Sentiment", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
-
-    # Emoji-style summary counts above the bar
-    pdf.set_font("Helvetica", "", 9)
-    for lbl, icon in [("Positive", "(+)"), ("Neutral", "(~)"), ("Negative", "(-)")]:
-        count = sentiment_counts.get(lbl, 0)
-        pct = f"{count / total * 100:.0f}%" if total else "0%"
-        sr, sg, sb = _hex_to_rgb(SENTIMENT_COLORS[lbl])
-        pdf.set_text_color(sr, sg, sb)
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(0, 5, f"  {icon} {lbl}: {count} ({pct})", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
     _draw_sentiment_bar(pdf, sentiment_counts, total)
-    pdf.ln(8)
+    # Labels under bar segments
+    bar_w = pdf.w - 20
+    x0 = 10
+    pdf.set_font("Lato", "", 7)
+    for lbl in ["Positive", "Neutral", "Negative"]:
+        count = sentiment_counts.get(lbl, 0)
+        pct = count / total if total else 0
+        seg_w = bar_w * pct
+        if seg_w > 10:
+            sr, sg, sb = _hex_to_rgb(SENTIMENT_COLORS[lbl])
+            pdf.set_text_color(sr, sg, sb)
+            pdf.set_x(x0)
+            pdf.cell(seg_w, 5, lbl, align="C", new_x="END")
+        x0 += seg_w
+    pdf.ln(10)
 
     # ---- AI Summary ----
     if ai_summary:
         if pdf.get_y() > pdf.h - 60:
             pdf.add_page()
-        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_font("Lato", "B", 13)
         pdf.set_text_color(91, 200, 240)
         pdf.cell(0, 8, "AI Theme Summary", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
-        pdf.set_font("Helvetica", "", 9)
+        pdf.set_font("Lato", "", 9)
         pdf.set_text_color(26, 26, 26)
         summary_text = _safe(ai_summary)
         pdf.multi_cell(pdf.w - 20, 4.5, summary_text, new_x="LMARGIN", new_y="NEXT")
@@ -392,7 +405,7 @@ def build_pdf_report(
         pdf.set_fill_color(r, g, b)
         pdf.rect(10, pdf.get_y(), 4, 8, "F")
         pdf.set_x(16)
-        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_font("Lato", "B", 13)
         pdf.set_text_color(26, 26, 26)
         pdf.cell(0, 8, f"{emoji_text} {label}  ({len(group)} comments)",
                  new_x="LMARGIN", new_y="NEXT")
@@ -404,7 +417,7 @@ def build_pdf_report(
         pdf.ln(6)
 
     # ---- Footer text ----
-    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_font("Lato", "I", 8)
     pdf.set_text_color(160, 160, 160)
     pdf.cell(0, 6, "Sentiment by VADER  |  Themes by TF-IDF + KMeans",
              align="C", new_x="LMARGIN", new_y="NEXT")
@@ -431,7 +444,7 @@ def _draw_sentiment_bar(pdf: FPDF, counts: dict, total: int):
         pdf.rect(x0, y0, seg_w, bar_h, "F")
         if seg_w > 20:
             pdf.set_xy(x0, y0)
-            pdf.set_font("Helvetica", "B", 7)
+            pdf.set_font("Lato", "B", 7)
             if label == "Positive":
                 pdf.set_text_color(26, 26, 26)
             else:
@@ -450,7 +463,7 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     # Video title tag
     if show_video_tag and c.get("video_title"):
         pdf.set_x(14)
-        pdf.set_font("Helvetica", "", 7)
+        pdf.set_font("Lato", "", 7)
         pdf.set_fill_color(243, 244, 246)
         pdf.set_text_color(74, 85, 104)
         tag_text = f"  {_safe(c['video_title'][:60])}  "
@@ -470,7 +483,7 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     pdf.ellipse(cx - avatar_size / 2, cy - avatar_size / 2, avatar_size, avatar_size, "F")
     initials = _initials(c["author"])
     pdf.set_xy(cx - avatar_size / 2, cy - 2.5)
-    pdf.set_font("Helvetica", "B", 7)
+    pdf.set_font("Lato", "B", 7)
     pdf.set_text_color(255, 255, 255)
     pdf.cell(avatar_size, 5, _safe(initials), align="C")
 
@@ -480,17 +493,17 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
 
     # Reply marker
     if c.get("is_reply"):
-        pdf.set_font("Helvetica", "I", 6)
+        pdf.set_font("Lato", "I", 6)
         pdf.set_fill_color(230, 248, 252)
         pdf.set_text_color(91, 200, 240)
         pdf.cell(12, 4, " reply", fill=True, new_x="END")
         pdf.cell(3, 4, "", new_x="END")  # spacer
 
-    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_font("Lato", "B", 9)
     pdf.set_text_color(3, 3, 3)
     pdf.cell(0, 5, _safe(c["author"]), new_x="END")
 
-    pdf.set_font("Helvetica", "", 7)
+    pdf.set_font("Lato", "", 7)
     pdf.set_text_color(144, 144, 144)
     date_str = _format_date(c["date"])
     pdf.cell(0, 5, f"   {date_str}", new_x="END")
@@ -502,7 +515,7 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     badge_x = pdf.get_x()
     badge_y = pdf.get_y()
     badge_text = f" {badge_icon} {label} "
-    pdf.set_font("Helvetica", "B", 7)
+    pdf.set_font("Lato", "B", 7)
     badge_w = pdf.get_string_width(badge_text) + 4
     pdf.set_fill_color(sr, sg, sb)
     pdf.rect(badge_x + 3, badge_y + 0.5, badge_w, 4, "F")
@@ -512,7 +525,7 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
 
     # Comment text
     pdf.set_x(content_x)
-    pdf.set_font("Helvetica", "", 9)
+    pdf.set_font("Lato", "", 9)
     pdf.set_text_color(3, 3, 3)
     comment_text = _safe(c["comment"])
     text_w = pdf.w - content_x - 10
@@ -521,7 +534,7 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     # Back-translation
     if c.get("back_translation") and c.get("original_language"):
         pdf.set_x(content_x)
-        pdf.set_font("Helvetica", "I", 8)
+        pdf.set_font("Lato", "I", 8)
         pdf.set_text_color(91, 200, 240)
         bt = _safe(c["back_translation"])
         pdf.multi_cell(text_w, 4, f"EN: {bt}", new_x="LMARGIN", new_y="NEXT")
@@ -534,7 +547,7 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
         meta_parts.append(f"Replies: {c['replies']}")
     if meta_parts:
         pdf.set_x(content_x)
-        pdf.set_font("Helvetica", "", 7)
+        pdf.set_font("Lato", "", 7)
         pdf.set_text_color(96, 96, 96)
         pdf.cell(0, 4, "  |  ".join(meta_parts), new_x="LMARGIN", new_y="NEXT")
 

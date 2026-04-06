@@ -1165,7 +1165,12 @@ def main():
             st.markdown(ai_summary)
 
     # --- PDF export ---
-    pdf_bytes = build_pdf_report(visible_comments, sq, kws, ai_summary=ai_summary)
+    _preset = st.session_state.get("keyword_preset", "Custom")
+    pdf_bytes = build_pdf_report(
+        visible_comments, sq, kws,
+        ai_summary=ai_summary,
+        preset_name=_preset,
+    )
 
     st.download_button(
         label="Download PDF Report",
