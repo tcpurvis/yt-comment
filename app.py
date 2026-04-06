@@ -1437,104 +1437,66 @@ def main():
 
     st.caption(f"Showing **{total:,}** comments")
 
-    # Bulk sentiment change
+    # Bulk actions
     with st.expander("**Bulk Actions**", expanded=False):
-        bulk_col1, bulk_col2, bulk_col3 = st.columns([0.4, 0.3, 0.3])
+        bulk_col1, bulk_col2 = st.columns([0.5, 0.5])
         with bulk_col1:
             bulk_target = st.selectbox(
-                "Change selected comments to",
+                "Change sentiment to",
                 options=["Positive", "Neutral", "Negative"],
                 key="bulk_sentiment_target",
-                label_visibility="collapsed",
             )
         with bulk_col2:
-            bulk_scope = st.radio(
-                "Apply to",
-                ["Checked comments", "All visible"],
-                horizontal=True,
-                key="bulk_sentiment_scope",
-            )
-        with bulk_col3:
-            if st.button("Apply Sentiment Change", key="bulk_sentiment_apply"):
+            if st.button("Apply to selected comments", key="bulk_sentiment_apply", type="primary"):
+                _selected_ids = st.session_state.get("_bulk_selected", set())
                 changed = 0
                 for c in display_comments:
-                    if bulk_scope == "Checked comments" and c["_id"] in hidden_ids:
-                        continue
-                    if c["sentiment_label"] != bulk_target:
+                    if c["_id"] in _selected_ids and c["sentiment_label"] != bulk_target:
                         c["sentiment_label"] = bulk_target
                         c["sentiment_override"] = True
                         changed += 1
                 if changed:
+                    st.session_state["_bulk_selected"] = set()
                     st.success(f"Changed **{changed:,}** comments to **{bulk_target}**.")
                     st.rerun()
                 else:
-                    st.info("No comments changed.")
+                    st.info("No comments selected or no changes needed. Use checkboxes below to select comments.")
 
-    # Render sentiment-grouped comment cards with checkboxes
+    # Initialize bulk selection set
+    if "_bulk_selected" not in st.session_state:
+        st.session_state["_bulk_selected"] = set()
+    bulk_selected = st.session_state["_bulk_selected"]
+
+    # Render sentiment-grouped comment cards
     for label, group_comments in sentiment_groups.items():
         emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
         color = SENTIMENT_COLORS[label]
         with st.expander(f"**{emoji} {label}** — {len(group_comments)} comments", expanded=True):
             for c in group_comments:
                 cid = c["_id"]
+                is_skipped = cid in hidden_ids
 
-                col_cb, col_card, col_sent = st.columns([0.03, 0.82, 0.15], vertical_alignment="top")
-                with col_cb:
-                    kept = st.checkbox(
-                        "include",
-                        value=(cid not in hidden_ids),
-                        key=f"cb_{cid}",
+                # Two columns: select checkbox + comment card
+                col_sel, col_card = st.columns([0.04, 0.96], vertical_alignment="top")
+
+                with col_sel:
+                    selected = st.checkbox(
+                        "select",
+                        value=(cid in bulk_selected),
+                        key=f"sel_{cid}",
                         label_visibility="collapsed",
                     )
-                if kept:
-                    hidden_ids.discard(cid)
-                else:
-                    hidden_ids.add(cid)
-
-                with col_sent:
-                    sentiment_options = ["Positive", "Neutral", "Negative"]
-                    current = c["sentiment_label"]
-                    new_sentiment = st.selectbox(
-                        "Sentiment",
-                        options=sentiment_options,
-                        index=sentiment_options.index(current),
-                        key=f"sent_{cid}",
-                        label_visibility="collapsed",
-                    )
-                    if new_sentiment != current:
-                        c["sentiment_label"] = new_sentiment
-                        c["sentiment_override"] = True
-
-                    # Language override + translate
-                    lang_code = c.get("matched_language", "en")
-                    lang_name_display = LANGUAGE_NAMES.get(lang_code, lang_code)
-                    all_lang_options = sorted(set(LANGUAGE_NAMES.values()) - {"All (unfiltered)"})
-                    current_lang_idx = all_lang_options.index(lang_name_display) if lang_name_display in all_lang_options else 0
-                    new_lang_name = st.selectbox(
-                        "Language",
-                        options=all_lang_options,
-                        index=current_lang_idx,
-                        key=f"lang_{cid}",
-                        label_visibility="collapsed",
-                    )
-                    # Reverse lookup name -> code
-                    _name_to_code_rev = {v: k for k, v in LANGUAGE_NAMES.items()}
-                    new_lang_code = _name_to_code_rev.get(new_lang_name, lang_code)
-                    if new_lang_code != lang_code:
-                        c["matched_language"] = new_lang_code
-
-                    has_translation = c.get("back_translation") and c["back_translation"] != c["comment"]
-                    if new_lang_code != "en" and not has_translation:
-                        if st.button("Translate", key=f"bt_{cid}"):
-                            c["back_translation"] = back_translate(c["comment"])
-                            st.rerun()
+                    if selected:
+                        bulk_selected.add(cid)
+                    else:
+                        bulk_selected.discard(cid)
 
                 with col_card:
                     avatar_bg = _avatar_color(c["author"])
                     initials = _initials(c["author"])
                     date_str = _format_date(c["date"])
                     sentiment = _sentiment_badge(c["sentiment_label"])
-                    opacity = "1" if kept else "0.35"
+                    opacity = "0.35" if is_skipped else "1"
 
                     reply_marker = ""
                     if c.get("is_reply"):
@@ -1607,7 +1569,26 @@ def main():
                     </div>
                     """)
 
+                    # Inline controls row
+                    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([0.2, 0.2, 0.6])
+                    with ctrl_col1:
+                        if not is_skipped:
+                            if st.button("Skip", key=f"skip_{cid}"):
+                                hidden_ids.add(cid)
+                                st.rerun()
+                        else:
+                            if st.button("Include", key=f"unskip_{cid}"):
+                                hidden_ids.discard(cid)
+                                st.rerun()
+                    with ctrl_col2:
+                        has_translation = c.get("back_translation") and c["back_translation"] != c["comment"]
+                        if lang_code != "en" and lang_code != "all" and not has_translation:
+                            if st.button("Translate", key=f"bt_{cid}"):
+                                c["back_translation"] = back_translate(c["comment"])
+                                st.rerun()
+
     st.session_state["hidden_ids"] = hidden_ids
+    st.session_state["_bulk_selected"] = bulk_selected
 
 
 if __name__ == "__main__":

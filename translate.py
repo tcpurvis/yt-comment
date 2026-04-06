@@ -4,27 +4,60 @@ from deep_translator import GoogleTranslator
 
 def detect_language(text: str) -> str:
     """Detect the language of a text string. Returns ISO code."""
-    # Try pycld2 first (fast, offline)
+    if not text or len(text.strip()) < 3:
+        return "en"
+
+    # Try pycld2 (fast, offline)
     try:
         import pycld2
-        _, _, details = pycld2.detect(text)
+        is_reliable, _, details = pycld2.detect(text)
         code = details[0][1]
+        confidence = details[0][2]
+
         if code and code != "un":
             # Normalize Chinese codes
             if code == "zh":
-                return "zh-CN"
-            return code
+                code = "zh-CN"
+            # Trust the result if reliable or high confidence
+            if is_reliable or confidence > 80:
+                return code
+            # For unreliable short text, check if it has non-ASCII chars
+            # that suggest non-English
+            has_non_ascii = any(ord(ch) > 127 for ch in text)
+            if has_non_ascii and code != "en":
+                return code
     except Exception:
         pass
 
-    # Fallback: use Google Translate's auto-detect via a dummy translation
-    try:
-        translator = GoogleTranslator(source="auto", target="en")
-        translator.translate(text[:200])
-        # deep-translator doesn't expose detected lang directly,
-        # so we check if the result differs from input
-    except Exception:
-        pass
+    # Fallback: check for common non-English character patterns
+    import re as _re
+    # Spanish indicators
+    if _re.search(r"[áéíóúñ¿¡]", text, _re.IGNORECASE):
+        return "es"
+    # French indicators
+    if _re.search(r"[àâçéèêëîïôùûüÿœæ]", text, _re.IGNORECASE):
+        return "fr"
+    # German indicators
+    if _re.search(r"[äöüß]", text, _re.IGNORECASE):
+        return "de"
+    # Portuguese indicators
+    if _re.search(r"[ãõçà]", text, _re.IGNORECASE) and _re.search(r"\b(não|sim|muito|também)\b", text, _re.IGNORECASE):
+        return "pt"
+    # Russian/Cyrillic
+    if _re.search(r"[а-яА-Я]", text):
+        return "ru"
+    # Arabic
+    if _re.search(r"[\u0600-\u06FF]", text):
+        return "ar"
+    # Japanese
+    if _re.search(r"[\u3040-\u30FF\u4E00-\u9FFF]", text):
+        return "ja"
+    # Korean
+    if _re.search(r"[\uAC00-\uD7AF]", text):
+        return "ko"
+    # Thai
+    if _re.search(r"[\u0E00-\u0E7F]", text):
+        return "th"
 
     return "en"
 
