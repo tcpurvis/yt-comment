@@ -293,12 +293,25 @@ def _render_markdown_text(pdf: FPDF, text: str, font_size: float = 9, line_heigh
             pdf.set_x(10)
             indent_w = width
 
-        # Split by **bold** markers
-        parts = _re.split(r"(\*\*.*?\*\*)", line)
+        # Split by formatting markers: **bold**, *italic*, <u>underline</u>
+        parts = _re.split(r"(\*\*.*?\*\*|\*.*?\*|<u>.*?</u>)", line)
         for part in parts:
             if part.startswith("**") and part.endswith("**"):
                 pdf.set_font("Lato", "B", font_size)
                 pdf.write(line_height, part[2:-2])
+            elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+                pdf.set_font("Lato", "I", font_size)
+                pdf.write(line_height, part[1:-1])
+            elif part.startswith("<u>") and part.endswith("</u>"):
+                pdf.set_font("Lato", "", font_size)
+                inner = part[3:-4]
+                # Draw underline manually
+                x_before = pdf.get_x()
+                pdf.write(line_height, inner)
+                x_after = pdf.get_x()
+                y_line = pdf.get_y() + line_height - 0.5
+                pdf.set_draw_color(26, 26, 26)
+                pdf.line(x_before, y_line, x_after, y_line)
             else:
                 pdf.set_font("Lato", "", font_size)
                 pdf.write(line_height, part)
