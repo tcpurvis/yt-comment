@@ -364,9 +364,22 @@ def main():
     from analysis import get_theme_summary, get_sentiment_counts
     from report import _sentiment_badge, _avatar_color, _initials, _format_date
 
-    themes = get_theme_summary(all_comments)
-    sentiment_counts = get_sentiment_counts(all_comments)
-    total = len(all_comments)
+    # --- Video filter (only when comments span multiple videos) ---
+    all_video_titles = sorted(set(c.get("video_title", "") for c in all_comments))
+    if len(all_video_titles) > 1:
+        selected_videos = st.multiselect(
+            "Filter by video",
+            options=all_video_titles,
+            default=all_video_titles,
+            help="Show only comments from the selected videos.",
+        )
+        display_comments = [c for c in all_comments if c.get("video_title") in selected_videos]
+    else:
+        display_comments = all_comments
+
+    themes = get_theme_summary(display_comments)
+    sentiment_counts = get_sentiment_counts(display_comments)
+    total = len(display_comments)
 
     # Overall sentiment summary
     _bar_html = ""
@@ -389,6 +402,7 @@ def main():
     )
 
     # Render each theme with styled comment cards + checkboxes
+    display_ids = {c["_id"] for c in display_comments}
     visible_comments = []
     for i, (theme_name, theme_comments) in enumerate(themes.items()):
         palette = ["#6366f1", "#ec4899", "#f59e0b", "#10b981",
@@ -442,6 +456,17 @@ def main():
                     comment_text = html_mod.escape(c["comment"])
                     author_text = html_mod.escape(c["author"])
 
+                    # Video title tag (shown when multiple videos)
+                    video_tag_html = ""
+                    if len(all_video_titles) > 1 and c.get("video_title"):
+                        vt = html_mod.escape(c["video_title"])
+                        video_tag_html = (
+                            f'<div style="margin-bottom:6px;">'
+                            f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
+                            f'font-size:11px;font-weight:500;color:#4a5568;background:#f3f4f6;">'
+                            f'🎬 {vt}</span></div>'
+                        )
+
                     st.html(f"""
                     <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f0f0f0;opacity:{opacity};">
                       <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;
@@ -450,6 +475,7 @@ def main():
                         {initials}
                       </div>
                       <div style="flex:1;min-width:0;">
+                        {video_tag_html}
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                           <span style="font-weight:600;font-size:13px;color:#030303;">{author_text}</span>
                           <span style="font-size:12px;color:#909090;">{date_str}</span>

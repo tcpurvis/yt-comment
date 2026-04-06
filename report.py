@@ -58,7 +58,19 @@ def _format_date(iso_str: str) -> str:
         return iso_str
 
 
-def _comment_card(c: dict) -> str:
+def _video_tag(c: dict, show_video_tag: bool) -> str:
+    if not show_video_tag or not c.get("video_title"):
+        return ""
+    vt = html.escape(c["video_title"])
+    return (
+        f'<div style="margin-bottom:4px;">'
+        f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
+        f'font-size:11px;font-weight:500;color:#4a5568;background:#f3f4f6;">'
+        f'🎬 {vt}</span></div>'
+    )
+
+
+def _comment_card(c: dict, show_video_tag: bool = False) -> str:
     author = html.escape(c["author"])
     text = html.escape(c["comment"])
     avatar_bg = _avatar_color(c["author"])
@@ -67,6 +79,7 @@ def _comment_card(c: dict) -> str:
     sentiment = _sentiment_badge(c["sentiment_label"])
     likes = _like_icon(c.get("likes", 0))
     replies = _reply_icon(c.get("replies", 0))
+    vtag = _video_tag(c, show_video_tag)
 
     translation_block = ""
     if c.get("back_translation") and c.get("original_language"):
@@ -86,6 +99,7 @@ def _comment_card(c: dict) -> str:
         {initials}
       </div>
       <div style="flex:1;min-width:0;">
+        {vtag}
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span style="font-weight:600;font-size:13px;color:#030303;">{author}</span>
           <span style="font-size:12px;color:#909090;">{date_str}</span>
@@ -131,12 +145,13 @@ def build_html_report(
     now = datetime.now().strftime("%B %d, %Y at %I:%M %p")
 
     kw_display = ", ".join(keywords) if keywords else "None"
+    multi_video = len(set(c.get("video_title", "") for c in comments)) > 1
 
     # Theme sections
     theme_sections = ""
     for i, (theme_name, theme_comments) in enumerate(themes.items()):
         color = THEME_PALETTE[i % len(THEME_PALETTE)]
-        cards = "".join(_comment_card(c) for c in theme_comments)
+        cards = "".join(_comment_card(c, show_video_tag=multi_video) for c in theme_comments)
 
         # Mini sentiment breakdown for this theme
         t_counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
@@ -271,6 +286,7 @@ def build_pdf_report(
     total = len(comments)
     now = datetime.now().strftime("%B %d, %Y at %I:%M %p")
     kw_display = ", ".join(keywords) if keywords else "None"
+    multi_video = len(set(c.get("video_title", "") for c in comments)) > 1
 
     pdf = _ReportPDF()
     pdf.alias_nb_pages()
@@ -365,7 +381,7 @@ def build_pdf_report(
 
         # Comments
         for c in theme_comments:
-            _draw_comment(pdf, c)
+            _draw_comment(pdf, c, show_video_tag=multi_video)
 
         pdf.ln(6)
 
@@ -405,10 +421,21 @@ def _draw_sentiment_bar(pdf: FPDF, counts: dict, total: int):
     pdf.set_y(y0 + bar_h)
 
 
-def _draw_comment(pdf: FPDF, c: dict):
+def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     """Draw a single comment card in the PDF."""
     if pdf.get_y() > pdf.h - 40:
         pdf.add_page()
+
+    # Video title tag
+    if show_video_tag and c.get("video_title"):
+        pdf.set_x(14)
+        pdf.set_font("Helvetica", "", 7)
+        pdf.set_fill_color(243, 244, 246)
+        pdf.set_text_color(74, 85, 104)
+        tag_text = f"  {_safe(c['video_title'][:60])}  "
+        tag_w = pdf.get_string_width(tag_text) + 4
+        pdf.cell(tag_w, 5, tag_text, fill=True, new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
 
     x_start = 14
     y_start = pdf.get_y()
