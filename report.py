@@ -285,7 +285,9 @@ def _render_markdown_text(pdf: FPDF, text: str, font_size: float = 9, line_heigh
             continue
 
         # Handle bullet points
-        if line.startswith("- "):
+        is_bullet = line.startswith("- ")
+        if is_bullet:
+            pdf.ln(2)  # extra spacing before bullet
             pdf.set_x(14)
             pdf.set_font("Lato", "", font_size)
             pdf.cell(4, line_height, chr(8226), new_x="END")  # bullet char
