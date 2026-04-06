@@ -310,8 +310,28 @@ def main():
         background: white;
         padding: 0.5rem 0;
     }
+    /* Right-align save button column */
+    div[data-testid="stMainBlockContainer"] > div:first-child
+    div[data-testid="stHorizontalBlock"] > div:last-child {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+    }
     </style>
     """)
+    _rainbow_bar = (
+        '<div style="display:flex;width:100%;height:3px;overflow:hidden;">'
+        '<div style="flex:1;background:#00BCE7;"></div>'
+        '<div style="flex:1;background:#E64783;"></div>'
+        '<div style="flex:1;background:#1CE8B5;"></div>'
+        '<div style="flex:1;background:#C94EFF;"></div>'
+        '<div style="flex:1;background:#FFD93D;"></div>'
+        '<div style="flex:1;background:#FF5E5B;"></div>'
+        '<div style="flex:1;background:#CCF913;"></div>'
+        '<div style="flex:1;background:#FF9500;"></div>'
+        '</div>'
+    )
+
     header_left, header_right = st.columns([0.8, 0.2])
     with header_left:
         st.title("YouTube Comment Analysis")
@@ -319,7 +339,7 @@ def main():
     with header_right:
         # Save project button (only when data exists)
         if "raw_comments" in st.session_state:
-            st.caption("Save full session to resume later")
+            st.html('<p style="text-align:right;font-size:12px;color:#6b7280;margin-bottom:4px;">Save full session to resume later</p>')
             _raw_h = st.session_state["raw_comments"]
             _sq_h = st.session_state.get("search_query", "export")
             _vtitles_h = sorted(set(c.get("video_title", "") for c in _raw_h if c.get("video_title")))
@@ -352,6 +372,9 @@ def main():
             "(`.streamlit/secrets.toml` locally or the Secrets panel on Streamlit Cloud)."
         )
         return
+
+    # --- Rainbow bar ---
+    st.html(_rainbow_bar)
 
     # --- Main inputs: video source ---
     input_mode = st.radio(
@@ -592,18 +615,6 @@ def main():
     raw_comments = st.session_state["raw_comments"]
     sq = st.session_state["search_query"]
 
-    _rainbow_bar = (
-        '<div style="display:flex;width:100%;height:3px;overflow:hidden;">'
-        '<div style="flex:1;background:#00BCE7;"></div>'
-        '<div style="flex:1;background:#E64783;"></div>'
-        '<div style="flex:1;background:#1CE8B5;"></div>'
-        '<div style="flex:1;background:#C94EFF;"></div>'
-        '<div style="flex:1;background:#FFD93D;"></div>'
-        '<div style="flex:1;background:#FF5E5B;"></div>'
-        '<div style="flex:1;background:#CCF913;"></div>'
-        '<div style="flex:1;background:#FF9500;"></div>'
-        '</div>'
-    )
     st.html(_rainbow_bar)
     from datetime import datetime
     _export_ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
