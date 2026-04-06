@@ -312,13 +312,14 @@ def main():
     }
     </style>
     """)
-    header_left, header_right = st.columns([0.7, 0.3])
+    header_left, header_right = st.columns([0.8, 0.2])
     with header_left:
         st.title("YouTube Comment Analysis")
         st.caption("Search · Analyze sentiment · Discover themes · Export PDF")
     with header_right:
         # Save project button (only when data exists)
         if "raw_comments" in st.session_state:
+            st.caption("Save full session to resume later")
             _raw_h = st.session_state["raw_comments"]
             _sq_h = st.session_state.get("search_query", "export")
             _vtitles_h = sorted(set(c.get("video_title", "") for c in _raw_h if c.get("video_title")))
