@@ -597,13 +597,10 @@ def main():
             st.warning("No comments matched your filters.")
             return
 
-        with st.spinner("Generating AI theme summary..."):
-            ai_summary = generate_ai_summary(analyzed, sq)
-
         st.session_state["analyzed_comments"] = analyzed
         st.session_state["hidden_ids"] = set()
         st.session_state["keywords"] = keywords
-        st.session_state["ai_summary"] = ai_summary
+        st.session_state.pop("ai_summary", None)
         st.success(f"**{len(analyzed):,}** comments match your filters.")
 
     # --- Nothing analyzed yet ---
@@ -613,17 +610,10 @@ def main():
     all_comments = st.session_state["analyzed_comments"]
     hidden_ids = st.session_state.get("hidden_ids", set())
     kws = st.session_state.get("keywords", [])
-    ai_summary = st.session_state.get("ai_summary", "")
 
     # --- Preview ---
     st.divider()
     st.subheader("Report Preview")
-
-    # --- AI Theme Summary ---
-    if ai_summary:
-        with st.expander("**AI Theme Summary**", expanded=True):
-            st.markdown(ai_summary)
-
     st.caption("Un-check any comment to exclude it from the report and PDF.")
 
     # --- Video filter ---
@@ -783,6 +773,19 @@ def main():
     if not visible_comments:
         st.warning("All comments are hidden. Check at least one to generate a report.")
         return
+
+    # --- AI Summary (runs on reviewed/visible comments) ---
+    st.divider()
+    ai_summary = st.session_state.get("ai_summary", "")
+
+    if st.button("Generate AI Summary", type="secondary"):
+        with st.spinner("Generating AI theme summary from selected comments..."):
+            ai_summary = generate_ai_summary(visible_comments, sq)
+            st.session_state["ai_summary"] = ai_summary
+
+    if ai_summary:
+        with st.expander("**AI Theme Summary**", expanded=True):
+            st.markdown(ai_summary)
 
     # --- PDF export ---
     pdf_bytes = build_pdf_report(visible_comments, sq, kws, ai_summary=ai_summary)
