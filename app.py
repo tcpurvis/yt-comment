@@ -603,22 +603,28 @@ def main():
                     f"({v_top:,} top-level, {v_replies:,} replies)"
                 )
 
-    col_info, col_dl = st.columns([0.7, 0.3])
-    with col_info:
-        st.subheader("Filter & Analyze")
-        st.caption(
-            f"**{total_raw:,}** cached comments available. "
-            "Change filters and re-analyze without re-fetching."
-        )
-    with col_dl:
-        st.download_button(
-            label="Export Raw Comments (JSON)",
-            data=export_data,
-            file_name=_export_filename,
-            mime="application/json",
-        )
+    _analysis_done = "analyzed_comments" in st.session_state
+    _analyze_expander = st.expander(
+        f"**Filter & Analyze** — {total_raw:,} cached comments",
+        expanded=not _analysis_done,
+    )
+    with _analyze_expander:
+        col_info, col_dl = st.columns([0.7, 0.3])
+        with col_info:
+            st.caption(
+                f"**{total_raw:,}** cached comments available. "
+                "Change filters and re-analyze without re-fetching."
+            )
+        with col_dl:
+            st.download_button(
+                label="Export Raw Comments (JSON)",
+                data=export_data,
+                file_name=_export_filename,
+                mime="application/json",
+            )
 
-    search_all = st.checkbox(
+    with _analyze_expander:
+        search_all = st.checkbox(
         "Return all comments (skip keyword filter)",
         help="Include every comment without keyword filtering. "
              "Useful when you want to analyze all discussion on specific videos.",
@@ -724,8 +730,10 @@ def main():
             )
             translated_kw_map[lang_code] = [k.strip() for k in edited.split(",") if k.strip()]
 
+    with _analyze_expander:
+        _do_analyze = st.button("Apply Filters & Analyze", type="primary")
 
-    if st.button("Apply Filters & Analyze", type="primary"):
+    if _do_analyze:
         if not search_all and not keywords:
             st.warning("Enter at least one keyword or check 'Return all comments'.")
             return
@@ -814,7 +822,8 @@ def main():
         st.session_state.pop("ai_summary", None)
         # Reset filter/sort state for fresh results
         for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
-                   "fs_author_search", "fs_min_likes", "fs_sort", "fs_reply_type"]:
+                   "fs_text_exclude", "fs_author_search", "fs_min_likes", "fs_sort",
+                   "fs_reply_type"]:
             st.session_state.pop(k, None)
         st.success(f"**{len(analyzed):,}** comments match your filters.")
 
@@ -917,8 +926,19 @@ def main():
                 key="fs_text_search",
             )
 
-        # Author filter
+        # Does not contain
         with filter_col4:
+            text_exclude = st.text_input(
+                "Does not contain",
+                placeholder="e.g. spam, bot, fake",
+                key="fs_text_exclude",
+                help="Exclude comments containing any of these words (comma-separated).",
+            )
+
+        filter_col3b, filter_col4b = st.columns(2)
+
+        # Author filter
+        with filter_col3b:
             author_search = st.text_input(
                 "Filter by author",
                 placeholder="e.g. @username",
@@ -967,6 +987,13 @@ def main():
     if text_search:
         text_search_lower = text_search.lower()
         display_comments = [c for c in display_comments if text_search_lower in c["comment"].lower()]
+
+    if text_exclude:
+        exclude_words = [w.strip().lower() for w in text_exclude.split(",") if w.strip()]
+        display_comments = [
+            c for c in display_comments
+            if not any(w in c["comment"].lower() for w in exclude_words)
+        ]
 
     if author_search:
         author_search_lower = author_search.lower()
@@ -1020,10 +1047,21 @@ def main():
             with st.spinner("Generating AI theme summary from selected comments..."):
                 ai_summary = generate_ai_summary(visible_comments, sq)
                 st.session_state["ai_summary"] = ai_summary
+                st.session_state["_ai_summary_ids"] = {c["_id"] for c in visible_comments}
 
+        # Check if summary is stale (comments changed since generation)
+        summary_stale = False
         if ai_summary:
+            saved_ids = st.session_state.get("_ai_summary_ids", set())
+            current_ids = {c["_id"] for c in visible_comments}
+            if saved_ids != current_ids:
+                summary_stale = True
+
             with st.expander("**AI Theme Summary**", expanded=True):
                 st.markdown(ai_summary)
+                if summary_stale:
+                    st.warning("Comments have changed since this summary was generated. "
+                               "Click **Generate AI Summary** above to refresh.")
 
         _preset = st.session_state.get("keyword_preset", "Custom")
         pdf_bytes = build_pdf_report(
@@ -1031,6 +1069,8 @@ def main():
             ai_summary=ai_summary,
             preset_name=_preset,
         )
+        if summary_stale:
+            st.caption("AI summary may be outdated. Regenerate before exporting for accurate results.")
         st.download_button(
             label="Download PDF Report",
             data=pdf_bytes,
