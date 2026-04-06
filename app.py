@@ -2,7 +2,6 @@ import re
 from urllib.parse import urlparse, parse_qs
 
 import streamlit as st
-import streamlit.components.v1 as components
 from googleapiclient.discovery import build
 
 from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES
@@ -193,18 +192,28 @@ def main():
         )
         max_videos = st.slider("Max videos to search", 1, 50, 10)
 
-    keyword_input = st.text_input(
-        "Filter comments by keywords (comma-separated)",
-        placeholder="e.g. great, awesome, helpful",
+    search_all = st.checkbox(
+        "Return all comments (skip keyword filter)",
+        help="Fetch every comment without filtering by keywords. "
+             "Useful when you want to analyze all discussion on specific videos.",
     )
-    keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
 
-    exclude_input = st.text_input(
-        "Exclude comments containing (comma-separated)",
-        placeholder="e.g. spam, subscribe, giveaway",
-        help="Comments matching any of these words will be excluded, even if they match the keywords above.",
-    )
-    exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
+    if not search_all:
+        keyword_input = st.text_input(
+            "Filter comments by keywords (comma-separated)",
+            placeholder="e.g. great, awesome, helpful",
+        )
+        keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
+
+        exclude_input = st.text_input(
+            "Exclude comments containing (comma-separated)",
+            placeholder="e.g. spam, subscribe, giveaway",
+            help="Comments matching any of these words will be excluded, even if they match the keywords above.",
+        )
+        exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
+    else:
+        keywords = []
+        exclude_keywords = []
 
     # --- Quota estimate (sidebar, rendered after all inputs are known) ---
     if input_mode == "Paste video URLs":
@@ -232,8 +241,8 @@ def main():
     )
 
     if st.button("Fetch & Analyze", type="primary"):
-        if not keywords:
-            st.warning("Enter at least one keyword to filter comments.")
+        if not search_all and not keywords:
+            st.warning("Enter at least one keyword or check 'Return all comments'.")
             return
 
         youtube = get_youtube_client(api_key)
@@ -297,7 +306,10 @@ def main():
                 comments = fetch_comments(youtube, video["video_id"], max_scan)
                 for c in comments:
                     c["video_title"] = video["title"]
-                filtered = filter_comments(comments, plan["keywords"], exclude_keywords)
+                if search_all:
+                    filtered = comments
+                else:
+                    filtered = filter_comments(comments, plan["keywords"], exclude_keywords)
 
                 if plan["lang"]:
                     filtered = add_back_translations(filtered, plan["lang"])
@@ -342,48 +354,80 @@ def main():
 
     all_comments = st.session_state["all_comments"]
     hidden_ids = st.session_state["hidden_ids"]
+    query = st.session_state["search_query"]
+    kws = st.session_state["keywords"]
 
-    # --- Hide comments UI ---
+    # --- Inline preview with hide toggles ---
     st.divider()
-    st.subheader("Review Comments")
-    st.caption(
-        "Un-check any comment to exclude it from the preview and PDF export."
-    )
+    st.subheader("Report Preview")
+    st.caption("Un-check any comment to exclude it from the report and PDF.")
 
+    from analysis import get_theme_summary, get_sentiment_counts
+
+    themes = get_theme_summary(all_comments)
+    sentiment_counts = get_sentiment_counts(all_comments)
+    total = len(all_comments)
+
+    # Overall sentiment bar
+    cols = st.columns(3)
+    for col, label in zip(cols, ["Positive", "Neutral", "Negative"]):
+        count = sentiment_counts.get(label, 0)
+        pct = f"{count / total * 100:.0f}%" if total else "0%"
+        emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
+        col.metric(f"{emoji} {label}", f"{count} ({pct})")
+
+    st.write("")
+
+    # Render each theme with its comments and inline checkboxes
     visible_comments = []
-    for c in all_comments:
-        cid = c["_id"]
-        # Build a short label: author + first 80 chars of comment
-        preview = c["comment"][:80].replace("\n", " ")
-        label = f"**{c['author']}**: {preview}..."
-        kept = st.checkbox(label, value=(cid not in hidden_ids), key=f"cb_{cid}")
-        if kept:
-            hidden_ids.discard(cid)
-            visible_comments.append(c)
-        else:
-            hidden_ids.add(cid)
+    for theme_name, theme_comments in themes.items():
+        with st.expander(f"**{theme_name}** — {len(theme_comments)} comments", expanded=True):
+            for c in theme_comments:
+                cid = c["_id"]
+                kept = st.checkbox(
+                    f"**{c['author']}** · {c['date'][:10]}",
+                    value=(cid not in hidden_ids),
+                    key=f"cb_{cid}",
+                )
+                if kept:
+                    hidden_ids.discard(cid)
+                    visible_comments.append(c)
+                else:
+                    hidden_ids.add(cid)
+                    continue
+
+                # Render the comment content inline
+                sentiment_color = {"Positive": "green", "Negative": "red", "Neutral": "gray"}
+                badge = f":{sentiment_color[c['sentiment_label']]}[{c['sentiment_label']}]"
+                st.markdown(f"{badge}")
+                st.write(c["comment"])
+
+                if c.get("back_translation") and c.get("original_language"):
+                    st.info(f"🌐 **English:** {c['back_translation']}")
+
+                meta = []
+                if c.get("likes", 0) > 0:
+                    meta.append(f"👍 {c['likes']}")
+                if c.get("replies", 0) > 0:
+                    meta.append(f"💬 {c['replies']}")
+                if meta:
+                    st.caption("  ".join(meta))
+                st.divider()
 
     st.session_state["hidden_ids"] = hidden_ids
-
-    if not visible_comments:
-        st.warning("All comments are hidden. Check at least one to generate a report.")
-        return
 
     hidden_count = len(all_comments) - len(visible_comments)
     if hidden_count:
         st.info(f"Hiding **{hidden_count}** comment(s). Report will include **{len(visible_comments)}**.")
 
-    # --- Build report from visible comments only ---
-    query = st.session_state["search_query"]
-    kws = st.session_state["keywords"]
+    if not visible_comments:
+        st.warning("All comments are hidden. Check at least one to generate a report.")
+        return
+
+    # --- Build PDF from visible comments only ---
     html_report = build_html_report(visible_comments, query, kws)
     pdf_bytes = build_pdf_report(visible_comments, query, kws)
 
-    st.divider()
-    st.subheader("Report Preview")
-    components.html(html_report, height=800, scrolling=True)
-
-    # --- PDF download ---
     st.download_button(
         label="Download PDF Report",
         data=pdf_bytes,
