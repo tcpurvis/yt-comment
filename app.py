@@ -264,8 +264,8 @@ def main():
                 return
             direct_videos = None
 
-        # --- Build search queries per language ---
-        search_plans = [{"keywords": keywords, "lang": None}]
+        # --- Build keyword sets per language ---
+        keyword_plans: list[dict] = [{"keywords": keywords, "lang": None}]
 
         if selected_langs:
             with st.spinner("Translating keywords..."):
@@ -273,53 +273,99 @@ def main():
                     lang_code = SUPPORTED_LANGUAGES[lang_name]
                     translated_kw = translate_keywords(keywords, lang_code)
                     if translated_kw:
-                        search_plans.append(
-                            {
-                                "keywords": translated_kw,
-                                "lang": lang_code,
-                            }
+                        keyword_plans.append(
+                            {"keywords": translated_kw, "lang": lang_code}
                         )
 
-        # --- Fetch comments for all languages ---
+        # --- Fetch and filter ---
         all_comments: list[dict] = []
-        total_plans = len(search_plans)
+        total_plans = len(keyword_plans)
 
-        for plan in search_plans:
-            lang_label = plan["lang"] or "English"
+        if direct_videos is not None:
+            # URL mode: fetch each video ONCE, filter with all keyword sets
+            all_kw_sets = [
+                (plan["keywords"], plan["lang"]) for plan in keyword_plans
+            ]
 
-            # Get videos: use direct list or search
-            if direct_videos is not None:
-                videos = direct_videos
-            else:
-                translated_query = " ".join(plan["keywords"]) if plan["lang"] else search_query
-                with st.spinner(f"Searching videos ({lang_label})..."):
-                    videos = search_videos(youtube, translated_query, max_videos)
-
-            if not videos:
-                continue
-
-            progress = st.progress(0, text=f"Fetching comments ({lang_label})...")
-            for i, video in enumerate(videos):
+            progress = st.progress(0, text="Fetching comments...")
+            for i, video in enumerate(direct_videos):
                 if len(all_comments) >= max_matches:
                     break
                 comments = fetch_comments(youtube, video["video_id"], max_scan)
                 for c in comments:
                     c["video_title"] = video["title"]
-                if search_all:
-                    filtered = comments
-                else:
-                    filtered = filter_comments(comments, plan["keywords"], exclude_keywords)
 
-                if plan["lang"]:
-                    filtered = add_back_translations(filtered, plan["lang"])
+                if search_all:
+                    matched = comments
+                else:
+                    # Try each keyword set; track which language matched
+                    seen_ids = set()
+                    matched = []
+                    for plan_kws, plan_lang in all_kw_sets:
+                        hits = filter_comments(comments, plan_kws, exclude_keywords)
+                        for h in hits:
+                            ckey = id(h)
+                            if ckey in seen_ids:
+                                continue
+                            seen_ids.add(ckey)
+                            if plan_lang:
+                                h = {**h}  # shallow copy so we don't mutate original
+                                h["_needs_bt"] = plan_lang
+                            matched.append(h)
+
+                    # Back-translate comments that matched via non-English keywords
+                    needs_bt = [m for m in matched if m.get("_needs_bt")]
+                    if needs_bt:
+                        by_lang: dict[str, list[dict]] = {}
+                        for m in needs_bt:
+                            by_lang.setdefault(m["_needs_bt"], []).append(m)
+                        for lang_code, group in by_lang.items():
+                            add_back_translations(group, lang_code)
+                        for m in needs_bt:
+                            m.pop("_needs_bt", None)
 
                 if no_match_limit:
-                    all_comments.extend(filtered)
+                    all_comments.extend(matched)
                 else:
                     remaining = max_matches - len(all_comments)
-                    all_comments.extend(filtered[:remaining])
-                progress.progress((i + 1) / len(videos))
+                    all_comments.extend(matched[:remaining])
+                progress.progress((i + 1) / len(direct_videos))
             progress.empty()
+        else:
+            # Search mode: each language plan may find different videos,
+            # so we still fetch per plan
+            for plan in keyword_plans:
+                lang_label = plan["lang"] or "English"
+
+                translated_query = " ".join(plan["keywords"]) if plan["lang"] else search_query
+                with st.spinner(f"Searching videos ({lang_label})..."):
+                    videos = search_videos(youtube, translated_query, max_videos)
+
+                if not videos:
+                    continue
+
+                progress = st.progress(0, text=f"Fetching comments ({lang_label})...")
+                for i, video in enumerate(videos):
+                    if len(all_comments) >= max_matches:
+                        break
+                    comments = fetch_comments(youtube, video["video_id"], max_scan)
+                    for c in comments:
+                        c["video_title"] = video["title"]
+                    if search_all:
+                        filtered = comments
+                    else:
+                        filtered = filter_comments(comments, plan["keywords"], exclude_keywords)
+
+                    if plan["lang"]:
+                        filtered = add_back_translations(filtered, plan["lang"])
+
+                    if no_match_limit:
+                        all_comments.extend(filtered)
+                    else:
+                        remaining = max_matches - len(all_comments)
+                        all_comments.extend(filtered[:remaining])
+                    progress.progress((i + 1) / len(videos))
+                progress.empty()
 
         if not all_comments:
             st.warning("No comments matched your keywords in any language.")
