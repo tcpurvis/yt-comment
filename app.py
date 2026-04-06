@@ -1169,41 +1169,6 @@ def main():
 
     all_comments = st.session_state["analyzed_comments"]
 
-    # --- Language Detection ---
-    lang_counts: dict[str, int] = {}
-    for c in all_comments:
-        lc = c.get("matched_language", "en")
-        name = LANGUAGE_NAMES.get(lc, lc)
-        lang_counts[name] = lang_counts.get(name, 0) + 1
-
-    non_english = [
-        c for c in all_comments
-        if c.get("matched_language", "en") != "en"
-        and c.get("matched_language") != "all"
-        and (not c.get("back_translation") or c["back_translation"] == c["comment"])
-    ]
-
-    if len(lang_counts) > 1 or (len(lang_counts) == 1 and "English" not in lang_counts) or non_english:
-        st.divider()
-        st.subheader("Language Detection")
-        lang_parts = [f"{name}: {count:,}" for name, count in
-                      sorted(lang_counts.items(), key=lambda x: -x[1])]
-        st.markdown(f"**Languages detected:** {' · '.join(lang_parts)}")
-
-        if non_english:
-            st.markdown(
-                f"**{len(non_english):,}** non-English comments without translations."
-            )
-            if st.button("Translate All", key="bulk_translate", type="primary"):
-                texts = [c["comment"] for c in non_english]
-                with st.spinner(f"Translating {len(texts):,} comments in batch..."):
-                    translations = batch_back_translate(texts)
-                for c, translation in zip(non_english, translations):
-                    c["back_translation"] = translation
-                    c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
-                st.success(f"Translated **{len(non_english):,}** comments.")
-                st.rerun()
-
     # --- Preview ---
     st.divider()
     st.subheader("Report Preview")
@@ -1442,6 +1407,39 @@ def main():
         st.session_state["_bulk_selected"] = set()
     bulk_selected = st.session_state["_bulk_selected"]
 
+    # --- Language Detection (sidebar, uses visible comments) ---
+    visible_for_lang = [c for c in all_comments if c["_id"] not in hidden_ids]
+    lang_counts: dict[str, int] = {}
+    for c in visible_for_lang:
+        lc = c.get("matched_language", "en")
+        name = LANGUAGE_NAMES.get(lc, lc)
+        lang_counts[name] = lang_counts.get(name, 0) + 1
+
+    non_english = [
+        c for c in visible_for_lang
+        if c.get("matched_language", "en") != "en"
+        and c.get("matched_language") != "all"
+        and (not c.get("back_translation") or c["back_translation"] == c["comment"])
+    ]
+
+    st.sidebar.header("Language Detection")
+    lang_parts = [f"{name}: {count:,}" for name, count in
+                  sorted(lang_counts.items(), key=lambda x: -x[1])]
+    st.sidebar.caption(" · ".join(lang_parts))
+
+    if non_english:
+        st.sidebar.caption(f"**{len(non_english):,}** untranslated")
+        if st.sidebar.button("Translate All", key="bulk_translate", type="primary"):
+            texts = [c["comment"] for c in non_english]
+            with st.spinner(f"Translating {len(texts):,} comments in batch..."):
+                translations = batch_back_translate(texts)
+            for c, translation in zip(non_english, translations):
+                c["back_translation"] = translation
+                c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
+            st.rerun()
+
+    st.sidebar.divider()
+
     # Bulk actions in sidebar
     st.sidebar.header("Bulk Actions")
     st.sidebar.caption(f"**{len(bulk_selected)}** comments selected")
@@ -1575,11 +1573,24 @@ def main():
                         if st.button("Include", key=f"unskip_{cid}"):
                             hidden_ids.discard(cid)
                             st.rerun()
-                    has_translation = c.get("back_translation") and c["back_translation"] != c["comment"]
-                    if lang_code != "en" and lang_code != "all" and not has_translation:
-                        if st.button("Translate", key=f"bt_{cid}"):
-                            c["back_translation"] = back_translate(c["comment"])
-                            st.rerun()
+                    # Language override
+                    _all_lang_opts = ["en"] + sorted(
+                        set(SUPPORTED_LANGUAGES.values())
+                    )
+                    _lang_display = [LANGUAGE_NAMES.get(lc, lc) for lc in _all_lang_opts]
+                    _cur_lc = c.get("matched_language", "en")
+                    _cur_idx = _all_lang_opts.index(_cur_lc) if _cur_lc in _all_lang_opts else 0
+                    _new_lang_disp = st.selectbox(
+                        "Lang",
+                        options=_lang_display,
+                        index=_cur_idx,
+                        key=f"lang_{cid}",
+                        label_visibility="collapsed",
+                    )
+                    _name_to_code_r = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _all_lang_opts}
+                    _new_lc = _name_to_code_r.get(_new_lang_disp, _cur_lc)
+                    if _new_lc != _cur_lc:
+                        c["matched_language"] = _new_lc
 
     st.session_state["hidden_ids"] = hidden_ids
     st.session_state["_bulk_selected"] = bulk_selected
