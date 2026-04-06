@@ -337,8 +337,13 @@ class _ReportPDF(FPDF):
 def build_pdf_report(
     comments: list[dict], search_query: str, keywords: list[str],
     ai_summary: str = "", preset_name: str = "",
+    multi_sections: list[dict] | None = None,
 ) -> bytes:
-    """Build a styled PDF report grouped by sentiment."""
+    """Build a styled PDF report grouped by sentiment.
+
+    multi_sections: if provided, list of {"name", "comments", "ai_summary"} dicts
+    for rendering multiple analysis sections (e.g. Subtitles + Dubbing).
+    """
     sentiment_counts = get_sentiment_counts(comments)
     total = len(comments)
     now = datetime.now(_ET).strftime("%B %d, %Y at %I:%M %p ET")
@@ -440,47 +445,93 @@ def build_pdf_report(
         x0 += seg_w
     pdf.ln(8)
 
-    # ---- AI Summary ----
-    if ai_summary:
-        pdf.ln(2)
-        pdf.set_font("Lato", "B", 13)
-        pdf.set_text_color(26, 26, 26)
-        pdf.cell(0, 8, "Summary", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(2)
-        pdf.set_text_color(26, 26, 26)
-        _render_markdown_text(pdf, ai_summary)
-        pdf.ln(4)
+    # ---- Determine sections to render ----
+    if multi_sections:
+        sections_to_render = multi_sections
+    else:
+        sections_to_render = [{"name": None, "comments": comments, "ai_summary": ai_summary}]
 
-    # ---- Divider line 2 (under overview section) ----
-    pdf.set_draw_color(200, 200, 200)
-    pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
-    pdf.ln(8)
+    for sec_idx, section in enumerate(sections_to_render):
+        sec_comments = section["comments"]
+        sec_summary = section.get("ai_summary", "")
+        sec_name = section.get("name")
 
-    # ---- Sentiment sections ----
-    for label in ["Positive", "Neutral", "Negative"]:
-        group = [c for c in comments if c["sentiment_label"] == label]
-        if not group:
+        if not sec_comments:
             continue
 
-        emoji_text = {"Positive": "(+)", "Negative": "(-)", "Neutral": "(~)"}[label]
-        color = SENTIMENT_COLORS[label]
+        # Section header for multi-analysis
+        if sec_name:
+            if sec_idx > 0:
+                pdf.add_page()
+            pdf.set_font("Lato", "B", 16)
+            pdf.set_text_color(26, 26, 26)
+            r_a, g_a, b_a = _hex_to_rgb("#00BCE7")
+            pdf.set_fill_color(r_a, g_a, b_a)
+            pdf.rect(10, pdf.get_y(), 4, 10, "F")
+            pdf.set_x(16)
+            pdf.cell(0, 10, _safe(sec_name), new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(4)
 
-        if pdf.get_y() > pdf.h - 50:
-            pdf.add_page()
-        r, g, b = _hex_to_rgb(color)
-        pdf.set_fill_color(r, g, b)
-        pdf.rect(10, pdf.get_y(), 4, 8, "F")
-        pdf.set_x(16)
-        pdf.set_font("Lato", "B", 13)
-        pdf.set_text_color(26, 26, 26)
-        pdf.cell(0, 8, f"{emoji_text} {label}  ({len(group)} comments)",
-                 new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(4)
+            # Section sentiment bar
+            sec_sc = get_sentiment_counts(sec_comments)
+            sec_total = len(sec_comments)
+            _draw_sentiment_bar(pdf, sec_sc, sec_total)
+            bar_w = pdf.w - 20
+            x0 = 10
+            pdf.set_font("Lato", "", 7)
+            for lbl in ["Positive", "Neutral", "Negative"]:
+                cnt = sec_sc.get(lbl, 0)
+                pct = cnt / sec_total if sec_total else 0
+                seg_w = bar_w * pct
+                if seg_w > 10:
+                    sr, sg, sb = _hex_to_rgb(SENTIMENT_COLORS[lbl])
+                    pdf.set_text_color(sr, sg, sb)
+                    pdf.set_x(x0)
+                    pdf.cell(seg_w, 5, lbl, align="C", new_x="END")
+                x0 += seg_w
+            pdf.ln(6)
 
-        for c in group:
-            _draw_comment(pdf, c, show_video_tag=multi_video)
+        # AI Summary for this section
+        if sec_summary:
+            pdf.ln(2)
+            pdf.set_font("Lato", "B", 13)
+            pdf.set_text_color(26, 26, 26)
+            pdf.cell(0, 8, "Summary", new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(2)
+            pdf.set_text_color(26, 26, 26)
+            _render_markdown_text(pdf, sec_summary)
+            pdf.ln(4)
 
-        pdf.ln(6)
+        # Divider
+        pdf.set_draw_color(200, 200, 200)
+        pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
+        pdf.ln(8)
+
+        # Sentiment-grouped comments for this section
+        for label in ["Positive", "Neutral", "Negative"]:
+            group = [c for c in sec_comments if c["sentiment_label"] == label]
+            if not group:
+                continue
+
+            emoji_text = {"Positive": "(+)", "Negative": "(-)", "Neutral": "(~)"}[label]
+            color = SENTIMENT_COLORS[label]
+
+            if pdf.get_y() > pdf.h - 50:
+                pdf.add_page()
+            r, g, b = _hex_to_rgb(color)
+            pdf.set_fill_color(r, g, b)
+            pdf.rect(10, pdf.get_y(), 4, 8, "F")
+            pdf.set_x(16)
+            pdf.set_font("Lato", "B", 13)
+            pdf.set_text_color(26, 26, 26)
+            pdf.cell(0, 8, f"{emoji_text} {label}  ({len(group)} comments)",
+                     new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(4)
+
+            for c in group:
+                _draw_comment(pdf, c, show_video_tag=multi_video)
+
+            pdf.ln(6)
 
     # ---- Footer text ----
     pdf.set_font("Lato", "I", 8)

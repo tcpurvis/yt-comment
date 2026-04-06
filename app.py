@@ -817,19 +817,36 @@ def main():
                 key="keyword_preset",
             )
 
-            if selected_preset != "Custom":
+            preset_data = KEYWORD_PRESETS.get(selected_preset, {})
+            is_multi_preset = preset_data.get("multi", False)
+
+            if is_multi_preset:
+                # Combined preset — will run multiple analyses
+                multi_analysis_names = preset_data["analyses"]
+                default_kw = ""
+                preset_translations = {}
+                st.info(f"This will run **{len(multi_analysis_names)}** analyses: {', '.join(multi_analysis_names)}")
+            elif selected_preset != "Custom":
                 preset = KEYWORD_PRESETS[selected_preset]
                 default_kw = ", ".join(preset["keywords"])
                 preset_translations = preset.get("translations", {})
+                is_multi_preset = False
+                multi_analysis_names = []
             else:
                 default_kw = ""
                 preset_translations = {}
+                is_multi_preset = False
+                multi_analysis_names = []
 
             # Update keyword input and clear translation cache when preset changes
             if st.session_state.get("_last_preset") != selected_preset:
-                st.session_state["keyword_input"] = default_kw
+                if not is_multi_preset:
+                    st.session_state["keyword_input"] = default_kw
                 st.session_state["_last_preset"] = selected_preset
                 st.session_state.pop("_translation_cache_key", None)
+                # Auto-select all languages for multi presets
+                if is_multi_preset:
+                    st.session_state["selected_langs"] = list(SUPPORTED_LANGUAGES.keys())
                 st.session_state.pop("_translated_kw_map", None)
 
             keyword_input = st.text_input(
@@ -909,106 +926,248 @@ def main():
     with _analyze_expander:
         _do_analyze = st.button("Run Analysis", type="primary")
 
+    def _run_single_analysis(raw, kw_list, excl_list, trans_map, status_obj, label=""):
+        """Run filter + sentiment + clustering on raw comments. Returns list or empty."""
+        prefix = f"[{label}] " if label else ""
+
+        # Filter
+        status_obj.write(f"{prefix}Filtering...")
+        all_kw_sets_a: list[tuple[re.Pattern, str | None]] = []
+        include_en_a = _build_keyword_pattern(kw_list)
+        if include_en_a:
+            all_kw_sets_a.append((include_en_a, None))
+        for lc, kws in trans_map.items():
+            pat = _build_keyword_pattern(kws)
+            if pat:
+                all_kw_sets_a.append((pat, lc))
+        exclude_pat_a = _build_keyword_pattern(excl_list)
+
+        seen_a: set[int] = set()
+        matched_a: list[dict] = []
+        for idx, c in enumerate(raw):
+            for inc_pat, plan_lang in all_kw_sets_a:
+                text = c["comment"]
+                if not inc_pat.search(text):
+                    continue
+                if exclude_pat_a and exclude_pat_a.search(text):
+                    continue
+                if idx in seen_a:
+                    continue
+                seen_a.add(idx)
+                copy = dict(c)
+                detected = detect_language(c["comment"])
+                copy["matched_language"] = detected
+                if detected != "en":
+                    copy["original_language"] = detected
+                matched_a.append(copy)
+                break
+
+        if not matched_a:
+            status_obj.write(f"{prefix}No matches found.")
+            return []
+
+        status_obj.write(f"{prefix}Found **{len(matched_a):,}** matches.")
+
+        # Sentiment
+        add_sentiment(matched_a)
+        sc = get_sentiment_counts(matched_a)
+        status_obj.write(f"{prefix}+{sc['Positive']} ~{sc['Neutral']} -{sc['Negative']}")
+
+        # Themes
+        cluster_into_themes(matched_a)
+
+        for idx, c in enumerate(matched_a):
+            c["_id"] = idx
+
+        return matched_a
+
     if _do_analyze:
-        if not search_all and not keywords:
+        # Determine if multi-analysis
+        _is_multi = (not search_all
+                     and selected_preset in KEYWORD_PRESETS
+                     and KEYWORD_PRESETS[selected_preset].get("multi"))
+
+        if not search_all and not _is_multi and not keywords:
             st.warning("Enter at least one keyword or check 'Return all comments'.")
             return
 
         status = st.status("Analyzing...", expanded=True)
 
-        # Step 1: Filter
-        status.update(label="Step 1/3 — Filtering comments...")
-        if search_all:
-            matched = [dict(c, matched_language="all") for c in raw_comments]
+        if _is_multi:
+            multi_names = KEYWORD_PRESETS[selected_preset]["analyses"]
+            multi_results = []
+            for mi, analysis_name in enumerate(multi_names):
+                status.update(label=f"Running {analysis_name} ({mi+1}/{len(multi_names)})...")
+                sub_preset = KEYWORD_PRESETS[analysis_name]
+                sub_kw = sub_preset["keywords"]
+                # Build translation map from preset + any user edits
+                sub_trans: dict[str, list[str]] = {}
+                for lang_name in (st.session_state.get("selected_langs") or []):
+                    lc = SUPPORTED_LANGUAGES[lang_name]
+                    if lc in sub_preset.get("translations", {}):
+                        sub_trans[lc] = sub_preset["translations"][lc]
+                    else:
+                        sub_trans[lc] = translate_keywords(sub_kw, lc)
+
+                result = _run_single_analysis(
+                    raw_comments, sub_kw, [], sub_trans, status, label=analysis_name
+                )
+                multi_results.append({"name": analysis_name, "comments": result})
+
+            status.update(label="Analysis complete.", state="complete", expanded=False)
+
+            st.session_state["multi_analyses"] = multi_results
+            st.session_state["analyzed_comments"] = multi_results[0]["comments"] if multi_results else []
+            st.session_state["hidden_ids"] = set()
+            st.session_state["keywords"] = []
+            st.session_state.pop("ai_summary", None)
+            st.session_state.pop("ai_summary_0", None)
+            st.session_state.pop("ai_summary_1", None)
+            for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
+                       "fs_text_exclude", "fs_min_likes", "fs_sort", "fs_reply_type"]:
+                st.session_state.pop(k, None)
+
+            total_matches = sum(len(r["comments"]) for r in multi_results)
+            st.success(f"**{total_matches:,}** total matches across {len(multi_names)} analyses.")
+
         else:
-            # Build compiled regex patterns for each keyword set
-            all_kw_sets: list[tuple[re.Pattern, str | None]] = []
-            include_en = _build_keyword_pattern(keywords)
-            if include_en:
-                all_kw_sets.append((include_en, None))
-            for lang_code, kws in translated_kw_map.items():
-                pat = _build_keyword_pattern(kws)
-                if pat:
-                    all_kw_sets.append((pat, lang_code))
+            if search_all:
+                status.update(label="Loading all comments...")
+                matched = [dict(c, matched_language="all") for c in raw_comments]
+                add_sentiment(matched)
+                cluster_into_themes(matched)
+                for idx, c in enumerate(matched):
+                    c["_id"] = idx
+            else:
+                matched = _run_single_analysis(
+                    raw_comments, keywords, exclude_keywords, translated_kw_map, status
+                )
 
-            exclude_pat = _build_keyword_pattern(exclude_keywords)
+            status.update(label="Analysis complete.", state="complete", expanded=False)
 
-            seen: set[int] = set()
-            matched: list[dict] = []
-            for idx, c in enumerate(raw_comments):
-                for include_pat, plan_lang in all_kw_sets:
-                    text = c["comment"]
-                    if not include_pat.search(text):
-                        continue
-                    if exclude_pat and exclude_pat.search(text):
-                        continue
-                    if idx in seen:
-                        continue
-                    seen.add(idx)
-                    copy = dict(c)
-                    # Detect actual language instead of using keyword set
-                    detected = detect_language(c["comment"])
-                    copy["matched_language"] = detected
-                    if detected != "en":
-                        copy["_needs_bt"] = detected
-                    matched.append(copy)
-                    break
+            if not matched:
+                st.warning("No comments matched your filters.")
+                return
 
-        if not matched:
-            status.update(label="No comments matched.", state="error")
-            st.warning("No comments matched your filters.")
-            return
-
-        status.write(f"Found **{len(matched):,}** matches.")
-
-        # Clean up internal flags, preserve language info for later translation
-        for m in matched:
-            bt_lang = m.pop("_needs_bt", None)
-            if bt_lang and not m.get("original_language"):
-                m["original_language"] = bt_lang
-
-        # Step 2: Sentiment
-        status.update(label=f"Step 2/3 — Sentiment analysis on {len(matched):,} comments...")
-        add_sentiment(matched)
-        sentiment_counts = get_sentiment_counts(matched)
-        status.write(
-            f"+{sentiment_counts['Positive']} positive, "
-            f"~{sentiment_counts['Neutral']} neutral, "
-            f"-{sentiment_counts['Negative']} negative"
-        )
-
-        # Step 3: Theme clustering (for AI summary)
-        status.update(label="Step 3/3 — Discovering themes...")
-        cluster_into_themes(matched)
-
-        for idx, c in enumerate(matched):
-            c["_id"] = idx
-
-        status.update(label="Analysis complete.", state="complete", expanded=False)
-
-        analyzed = matched
-
-        if not analyzed:
-            st.warning("No comments matched your filters.")
-            return
-
-        st.session_state["analyzed_comments"] = analyzed
-        st.session_state["hidden_ids"] = set()
-        st.session_state["keywords"] = keywords
-        st.session_state.pop("ai_summary", None)
-        # Reset filter/sort state for fresh results
-        for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
-                   "fs_text_exclude", "fs_min_likes", "fs_sort", "fs_reply_type"]:
-            st.session_state.pop(k, None)
-        st.success(f"**{len(analyzed):,}** comments match your filters.")
+            st.session_state["analyzed_comments"] = matched
+            st.session_state["multi_analyses"] = None
+            st.session_state["hidden_ids"] = set()
+            st.session_state["keywords"] = keywords
+            st.session_state.pop("ai_summary", None)
+            for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
+                       "fs_text_exclude", "fs_min_likes", "fs_sort", "fs_reply_type"]:
+                st.session_state.pop(k, None)
+            st.success(f"**{len(matched):,}** comments match your filters.")
 
     # --- Nothing analyzed yet ---
     if "analyzed_comments" not in st.session_state:
         return
 
-    all_comments = st.session_state["analyzed_comments"]
+    multi_analyses = st.session_state.get("multi_analyses")
     hidden_ids = st.session_state.get("hidden_ids", set())
     kws = st.session_state.get("keywords", [])
+
+    # Tab selector for multi-analysis
+    _active_tab = 0
+    if multi_analyses and len(multi_analyses) > 1:
+        tab_names = [r["name"] for r in multi_analyses]
+        tabs = st.tabs(tab_names)
+        # We render the full view inside each tab
+        # Use session state to track which tab's data to show
+        for tab_idx, tab_obj in enumerate(tabs):
+            with tab_obj:
+                _tab_comments = multi_analyses[tab_idx]["comments"]
+                _tab_name = tab_names[tab_idx]
+                if not _tab_comments:
+                    st.info(f"No comments matched for **{_tab_name}**.")
+                    continue
+
+                st.subheader(f"{_tab_name} — {len(_tab_comments):,} comments")
+
+                # Sentiment bar for this tab
+                _t_sc = get_sentiment_counts(_tab_comments)
+                _t_total = len(_tab_comments)
+                _t_bar = ""
+                for _lbl in ["Positive", "Neutral", "Negative"]:
+                    _cnt = _t_sc.get(_lbl, 0)
+                    _pct_v = _cnt / _t_total * 100 if _t_total else 0
+                    _clr = SENTIMENT_COLORS[_lbl]
+                    _tc = "#1a1a1a" if _lbl == "Positive" else "#fff"
+                    if _pct_v > 0:
+                        _t_bar += (
+                            f'<div style="flex:{_pct_v};background:{_clr};height:32px;'
+                            f'display:flex;align-items:center;justify-content:center;'
+                            f'color:{_tc};font-size:12px;font-weight:600;'
+                            f'min-width:{40 if _pct_v > 3 else 0}px;">'
+                            f'{_cnt} ({_pct_v:.0f}%)</div>'
+                        )
+                st.html(f'<div style="display:flex;border-radius:12px;overflow:hidden;margin:8px 0 16px 0;">{_t_bar}</div>')
+
+                # AI summary for this tab
+                _ai_key = f"ai_summary_{tab_idx}"
+                _ai_sum = st.session_state.get(_ai_key, "")
+                _vis = [c for c in _tab_comments if c["_id"] not in hidden_ids]
+                if _vis:
+                    if st.button("Generate AI Summary", key=f"gen_ai_{tab_idx}", type="secondary"):
+                        with st.spinner(f"Generating summary for {_tab_name}..."):
+                            _ai_sum = generate_ai_summary(_vis, sq)
+                            st.session_state[_ai_key] = _ai_sum
+                    if _ai_sum:
+                        with st.expander(f"**Summary**", expanded=True):
+                            st.markdown(_ai_sum, unsafe_allow_html=True)
+
+                # Comment list (simplified for tabs)
+                _t_groups = {}
+                for _lbl in ["Positive", "Neutral", "Negative"]:
+                    _grp = [c for c in _tab_comments if c["sentiment_label"] == _lbl]
+                    if _grp:
+                        _t_groups[_lbl] = _grp
+
+                for _lbl, _grp_c in _t_groups.items():
+                    _emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[_lbl]
+                    with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=False):
+                        for c in _grp_c:
+                            cid = c["_id"]
+                            _kept = st.checkbox("include", value=(cid not in hidden_ids),
+                                                key=f"cb_{tab_idx}_{cid}", label_visibility="collapsed")
+                            if _kept:
+                                hidden_ids.discard(cid)
+                            else:
+                                hidden_ids.add(cid)
+                            comment_text = html_mod.escape(c["comment"])
+                            author_text = html_mod.escape(c["author"])
+                            st.html(f'<div style="padding:6px 0;border-bottom:1px solid #f0f0f0;opacity:{"1" if _kept else "0.35"};">'
+                                    f'<b>{author_text}</b> · {c["date"][:10]}<br>{comment_text}</div>')
+
+        # PDF export for multi-analysis
+        st.divider()
+        _all_vis = []
+        _all_summaries = []
+        for ti, ma in enumerate(multi_analyses):
+            _vis_t = [c for c in ma["comments"] if c["_id"] not in hidden_ids]
+            _all_vis.extend(_vis_t)
+            _all_summaries.append({
+                "name": ma["name"],
+                "comments": _vis_t,
+                "ai_summary": st.session_state.get(f"ai_summary_{ti}", ""),
+            })
+
+        if _all_vis:
+            _preset_name = st.session_state.get("keyword_preset", "Custom")
+            pdf_bytes = build_pdf_report(_all_vis, sq, kws, preset_name=_preset_name,
+                                          multi_sections=_all_summaries)
+            st.download_button(
+                label="Download PDF Report",
+                data=pdf_bytes,
+                file_name=f"{_title_slug}_{_export_ts}_report.pdf",
+                mime="application/pdf",
+                type="primary",
+            )
+
+        st.session_state["hidden_ids"] = hidden_ids
+        return
+
+    all_comments = st.session_state["analyzed_comments"]
 
     # --- Language Detection ---
     lang_counts: dict[str, int] = {}
@@ -1313,11 +1472,27 @@ def main():
                         c["sentiment_label"] = new_sentiment
                         c["sentiment_override"] = True
 
-                    # On-demand translate button for non-English comments
+                    # Language override + translate
                     lang_code = c.get("matched_language", "en")
+                    lang_name_display = LANGUAGE_NAMES.get(lang_code, lang_code)
+                    all_lang_options = sorted(set(LANGUAGE_NAMES.values()) - {"All (unfiltered)"})
+                    current_lang_idx = all_lang_options.index(lang_name_display) if lang_name_display in all_lang_options else 0
+                    new_lang_name = st.selectbox(
+                        "Language",
+                        options=all_lang_options,
+                        index=current_lang_idx,
+                        key=f"lang_{cid}",
+                        label_visibility="collapsed",
+                    )
+                    # Reverse lookup name -> code
+                    _name_to_code_rev = {v: k for k, v in LANGUAGE_NAMES.items()}
+                    new_lang_code = _name_to_code_rev.get(new_lang_name, lang_code)
+                    if new_lang_code != lang_code:
+                        c["matched_language"] = new_lang_code
+
                     has_translation = c.get("back_translation") and c["back_translation"] != c["comment"]
-                    if lang_code != "en" and not has_translation:
-                        if st.button("🌐 Translate", key=f"bt_{cid}"):
+                    if new_lang_code != "en" and not has_translation:
+                        if st.button("Translate", key=f"bt_{cid}"):
                             c["back_translation"] = back_translate(c["comment"])
                             st.rerun()
 

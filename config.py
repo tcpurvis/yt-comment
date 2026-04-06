@@ -129,6 +129,10 @@ KEYWORD_PRESETS = {
                     "dubbing Indonesia"],
         },
     },
+    "Subtitles & Dubs": {
+        "multi": True,
+        "analyses": ["Subtitles & Captions", "Dubbing & Voice"],
+    },
 }
 
 THEME_PALETTE = [
