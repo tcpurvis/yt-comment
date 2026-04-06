@@ -836,11 +836,11 @@ def main():
     all_languages = sorted(set(c.get("matched_language", "en") for c in all_comments))
     all_language_labels = [_lang_code_to_name.get(lc, lc) for lc in all_languages]
 
-    if "fs_videos" not in st.session_state:
+    if "fs_videos" not in st.session_state or not st.session_state["fs_videos"]:
         st.session_state["fs_videos"] = all_video_titles
-    if "fs_sentiment" not in st.session_state:
+    if "fs_sentiment" not in st.session_state or not st.session_state["fs_sentiment"]:
         st.session_state["fs_sentiment"] = ["Positive", "Neutral", "Negative"]
-    if "fs_language" not in st.session_state:
+    if "fs_language" not in st.session_state or not st.session_state["fs_language"]:
         st.session_state["fs_language"] = all_language_labels
 
     with st.expander("**Filter & Sort**", expanded=False):
