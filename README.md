@@ -35,18 +35,18 @@ A Streamlit app that searches YouTube videos by keyword, fetches their comments,
 
 - Search YouTube videos by query
 - Filter comments by multiple keywords (comma-separated, case-insensitive, any match)
-- Configurable limits for videos and comments per video
-- Interactive data table with full results
-- CSV export with: author, comment text, like count, reply count, date posted
+- **Sentiment analysis** (VADER) — each comment tagged Positive / Neutral / Negative
+- **Theme discovery** — comments auto-grouped by topic using TF-IDF + KMeans clustering
+- **Multi-language search** — keywords are translated to selected languages, matching foreign comments are fetched with a back-translation to English
+- Playful YouTube-style HTML report with avatars, sentiment badges, and theme sections
+- In-app report preview + downloadable **PDF export**
 
-## CSV Columns
+## Architecture
 
-| Column | Description |
+| File | Purpose |
 |---|---|
-| author | Comment author display name |
-| comment | Comment text |
-| like_count | Number of likes on the comment |
-| reply_count | Number of replies |
-| date_posted | ISO 8601 timestamp |
-| video_title | Title of the source video |
-| video_id | YouTube video ID |
+| `app.py` | Streamlit UI, orchestration |
+| `config.py` | Constants, supported languages, color palettes |
+| `analysis.py` | VADER sentiment + TF-IDF/KMeans theme clustering |
+| `translate.py` | Keyword translation + back-translation via Google Translate |
+| `report.py` | YouTube-styled HTML report builder |

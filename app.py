@@ -1,7 +1,13 @@
 import streamlit as st
-import pandas as pd
+import streamlit.components.v1 as components
 from googleapiclient.discovery import build
-from config import MAX_RESULTS_PER_PAGE
+from xhtml2pdf import pisa
+import io
+
+from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES
+from analysis import add_sentiment, cluster_into_themes
+from translate import translate_keywords, add_back_translations
+from report import build_html_report
 
 
 def get_youtube_client(api_key: str):
@@ -71,9 +77,17 @@ def filter_comments(comments: list[dict], keywords: list[str]) -> list[dict]:
     ]
 
 
+def html_to_pdf(html_content: str) -> bytes:
+    """Convert an HTML string to PDF bytes."""
+    buf = io.BytesIO()
+    pisa.CreatePDF(io.StringIO(html_content), dest=buf)
+    return buf.getvalue()
+
+
 def main():
     st.set_page_config(page_title="YouTube Comment Scraper", layout="wide")
-    st.title("YouTube Comment Scraper")
+    st.title("💬 YouTube Comment Scraper")
+    st.caption("Search · Analyze sentiment · Discover themes · Export PDF")
 
     api_key = st.secrets.get("YOUTUBE_API_KEY", "")
     if not api_key:
@@ -83,66 +97,124 @@ def main():
         )
         return
 
-    search_query = st.text_input("Search YouTube for videos", placeholder="e.g. python tutorial")
+    # --- Sidebar ---
+    st.sidebar.header("Settings")
+    max_videos = st.sidebar.slider("Max videos to search", 1, 50, 10)
+    max_comments = st.sidebar.slider("Max comments per video", 10, 500, 100)
+    max_themes = st.sidebar.slider("Max themes", 2, 12, 6)
+
+    st.sidebar.header("Multi-Language Search")
+    selected_langs = st.sidebar.multiselect(
+        "Also search in these languages",
+        options=list(SUPPORTED_LANGUAGES.keys()),
+        help="Keywords will be translated and used to search for comments in each selected language. "
+             "Matching comments will include a back-translation to English.",
+    )
+
+    # --- Main inputs ---
+    search_query = st.text_input(
+        "Search YouTube for videos",
+        placeholder="e.g. python tutorial",
+    )
     keyword_input = st.text_input(
         "Filter comments by keywords (comma-separated)",
         placeholder="e.g. great, awesome, helpful",
     )
     keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
 
-    col1, col2 = st.columns(2)
-    max_videos = col1.slider("Max videos to search", 1, 50, 10)
-    max_comments = col2.slider("Max comments per video", 10, 500, 100)
-
-    if st.button("Fetch Comments", type="primary"):
+    if st.button("Fetch & Analyze", type="primary"):
         if not search_query:
             st.warning("Please enter a search query.")
+            return
+        if not keywords:
+            st.warning("Enter at least one keyword to filter comments.")
             return
 
         youtube = get_youtube_client(api_key)
 
-        with st.spinner("Searching videos..."):
-            videos = search_videos(youtube, search_query, max_videos)
+        # --- Build search queries per language ---
+        search_plans = [{"query": search_query, "keywords": keywords, "lang": None}]
 
-        if not videos:
-            st.warning("No videos found.")
+        if selected_langs:
+            with st.spinner("Translating keywords..."):
+                for lang_name in selected_langs:
+                    lang_code = SUPPORTED_LANGUAGES[lang_name]
+                    translated_kw = translate_keywords(keywords, lang_code)
+                    if translated_kw:
+                        translated_query = " ".join(translated_kw)
+                        search_plans.append(
+                            {
+                                "query": translated_query,
+                                "keywords": translated_kw,
+                                "lang": lang_code,
+                            }
+                        )
+
+        # --- Fetch comments for all languages ---
+        all_comments: list[dict] = []
+        total_plans = len(search_plans)
+
+        for plan_idx, plan in enumerate(search_plans):
+            lang_label = plan["lang"] or "English"
+            with st.spinner(f"Searching videos ({lang_label})..."):
+                videos = search_videos(youtube, plan["query"], max_videos)
+
+            if not videos:
+                continue
+
+            progress = st.progress(0, text=f"Fetching comments ({lang_label})...")
+            for i, video in enumerate(videos):
+                comments = fetch_comments(youtube, video["video_id"], max_comments)
+                for c in comments:
+                    c["video_title"] = video["title"]
+                filtered = filter_comments(comments, plan["keywords"])
+
+                if plan["lang"]:
+                    filtered = add_back_translations(filtered, plan["lang"])
+
+                all_comments.extend(filtered)
+                progress.progress((i + 1) / len(videos))
+            progress.empty()
+
+        if not all_comments:
+            st.warning("No comments matched your keywords in any language.")
             return
 
-        st.write(f"Found **{len(videos)}** videos. Fetching comments...")
+        # --- Analysis ---
+        with st.spinner("Analyzing sentiment..."):
+            all_comments = add_sentiment(all_comments)
 
-        all_comments = []
-        progress = st.progress(0)
-        for i, video in enumerate(videos):
-            comments = fetch_comments(youtube, video["video_id"], max_comments)
-            for c in comments:
-                c["video_title"] = video["title"]
-            all_comments.extend(comments)
-            progress.progress((i + 1) / len(videos))
+        with st.spinner("Discovering themes..."):
+            all_comments = cluster_into_themes(all_comments, max_themes=max_themes)
 
-        filtered = filter_comments(all_comments, keywords)
+        st.success(f"Analyzed **{len(all_comments)}** comments across **{total_plans}** language(s).")
 
-        st.success(
-            f"Fetched **{len(all_comments)}** comments, "
-            f"**{len(filtered)}** match keyword filter."
-        )
+        # --- Build report ---
+        html_report = build_html_report(all_comments, search_query, keywords)
 
-        if not filtered:
-            st.info("No comments matched your keywords.")
-            return
+        # Store in session state so it persists across reruns
+        st.session_state["report_html"] = html_report
+        st.session_state["report_comments"] = all_comments
 
-        df = pd.DataFrame(filtered)
-        df = df[["author", "comment", "likes", "replies", "date", "video_title", "video_id"]]
-        df = df.rename(columns={"likes": "like_count", "replies": "reply_count", "date": "date_posted"})
+    # --- Display report if available ---
+    if "report_html" not in st.session_state:
+        return
 
-        st.dataframe(df, use_container_width=True)
+    html_report = st.session_state["report_html"]
 
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name="youtube_comments.csv",
-            mime="text/csv",
-        )
+    st.divider()
+    st.subheader("Report Preview")
+    components.html(html_report, height=800, scrolling=True)
+
+    # --- PDF download ---
+    pdf_bytes = html_to_pdf(html_report)
+    st.download_button(
+        label="⬇️  Download PDF Report",
+        data=pdf_bytes,
+        file_name="youtube_comment_report.pdf",
+        mime="application/pdf",
+        type="primary",
+    )
 
 
 if __name__ == "__main__":
