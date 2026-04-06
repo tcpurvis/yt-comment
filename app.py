@@ -383,7 +383,9 @@ def main():
 
     if input_mode != "Upload previous export":
         st.sidebar.divider()
-    if input_mode != "Upload previous export" and fetch_all:
+    if input_mode == "Upload previous export":
+        pass  # No quota estimate for uploads
+    elif fetch_all:
         st.sidebar.markdown(
             "### API Quota Estimate\n"
             "⚠️ **Unknown** — fetching all comments. Quota usage depends on "
