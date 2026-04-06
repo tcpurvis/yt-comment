@@ -162,7 +162,6 @@ def main():
             value=200, step=50,
             help="Stop collecting once this many keyword-matched comments are found across all videos.",
         )
-    max_themes = st.sidebar.slider("Max themes", 2, 12, 6)
 
     st.sidebar.header("Multi-Language Search")
     selected_langs = st.sidebar.multiselect(
@@ -331,7 +330,7 @@ def main():
             all_comments = add_sentiment(all_comments)
 
         with st.spinner("Discovering themes..."):
-            all_comments = cluster_into_themes(all_comments, max_themes=max_themes)
+            all_comments = cluster_into_themes(all_comments)
 
         st.success(
             f"Analyzed **{len(all_comments)}** matched comments "

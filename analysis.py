@@ -1,6 +1,7 @@
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 import numpy as np
 
 
@@ -30,11 +31,28 @@ def add_sentiment(comments: list[dict]) -> list[dict]:
     return comments
 
 
-def cluster_into_themes(
-    comments: list[dict], max_themes: int = 8, min_comments: int = 3
-) -> list[dict]:
-    """Assign a theme label to each comment using TF-IDF + KMeans clustering."""
-    if len(comments) < min_comments:
+def _optimal_k(tfidf, max_k: int) -> int:
+    """Find the best number of clusters using silhouette score."""
+    best_k = 2
+    best_score = -1
+    for k in range(2, max_k + 1):
+        km = KMeans(n_clusters=k, n_init=10, random_state=42)
+        labels = km.fit_predict(tfidf)
+        if len(set(labels)) < 2:
+            continue
+        score = silhouette_score(tfidf, labels)
+        if score > best_score:
+            best_score = score
+            best_k = k
+    return best_k
+
+
+def cluster_into_themes(comments: list[dict]) -> list[dict]:
+    """Assign a theme label to each comment using TF-IDF + KMeans.
+
+    The number of clusters is chosen automatically via silhouette analysis.
+    """
+    if len(comments) < 3:
         for c in comments:
             c["theme"] = "General"
         return comments
@@ -51,8 +69,10 @@ def cluster_into_themes(
     tfidf = vectorizer.fit_transform(texts)
     feature_names = vectorizer.get_feature_names_out()
 
-    n_clusters = min(max_themes, max(2, len(comments) // 5))
-    n_clusters = min(n_clusters, len(comments))
+    # Auto-detect optimal cluster count (try 2 up to sqrt(n), capped at 15)
+    max_k = min(15, max(2, int(len(comments) ** 0.5)))
+    max_k = min(max_k, len(comments) - 1)
+    n_clusters = _optimal_k(tfidf, max_k)
 
     km = KMeans(n_clusters=n_clusters, n_init=10, random_state=42)
     km.fit(tfidf)
