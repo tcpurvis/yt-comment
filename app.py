@@ -221,78 +221,6 @@ def filter_comments(
     return results
 
 
-# ---------------------------------------------------------------------------
-# Apply filters + analysis to the cached raw comments (no API calls)
-# ---------------------------------------------------------------------------
-def apply_filters_and_analysis(
-    raw_comments: list[dict],
-    keywords: list[str],
-    exclude_keywords: list[str],
-    search_all: bool,
-    translated_kw_map: dict[str, list[str]],
-    no_match_limit: bool,
-    max_matches: float,
-) -> list[dict]:
-    """Filter, translate, sentiment-score, and cluster cached comments.
-
-    translated_kw_map: {lang_code: [translated_keywords]} — already translated
-    and potentially edited by the user.
-    """
-    if search_all:
-        matched = [dict(c) for c in raw_comments]  # shallow copies
-    else:
-        # Build all keyword sets (English + pre-translated)
-        all_kw_sets: list[tuple[list[str], str | None]] = [(keywords, None)]
-        for lang_code, kws in translated_kw_map.items():
-            if kws:
-                all_kw_sets.append((kws, lang_code))
-
-        # Match against each keyword set, deduplicate, track language
-        seen: set[int] = set()
-        matched: list[dict] = []
-        for idx, c in enumerate(raw_comments):
-            for plan_kws, plan_lang in all_kw_sets:
-                text = c["comment"].lower()
-                if not any(kw.lower() in text for kw in plan_kws):
-                    continue
-                if exclude_keywords and any(ex.lower() in text for ex in exclude_keywords):
-                    continue
-                if idx in seen:
-                    continue
-                seen.add(idx)
-                copy = dict(c)
-                if plan_lang:
-                    copy["_needs_bt"] = plan_lang
-                matched.append(copy)
-                break  # first matching keyword set wins
-
-        # Back-translate comments that matched via non-English keywords
-        needs_bt = [m for m in matched if m.get("_needs_bt")]
-        if needs_bt:
-            by_lang: dict[str, list[dict]] = {}
-            for m in needs_bt:
-                by_lang.setdefault(m.pop("_needs_bt"), []).append(m)
-            for lang_code, group in by_lang.items():
-                add_back_translations(group, lang_code)
-
-    # Apply match limit
-    if not no_match_limit and len(matched) > max_matches:
-        matched = matched[: int(max_matches)]
-
-    if not matched:
-        return []
-
-    # Sentiment + themes
-    add_sentiment(matched)
-    cluster_into_themes(matched)
-
-    # Assign stable IDs
-    for idx, c in enumerate(matched):
-        c["_id"] = idx
-
-    return matched
-
-
 def main():
     st.set_page_config(page_title="YouTube Comment Scraper", layout="wide")
     st.title("💬 YouTube Comment Scraper")
@@ -587,16 +515,81 @@ def main():
             st.warning("Enter at least one keyword or check 'Return all comments'.")
             return
 
-        with st.spinner("Filtering and analyzing..."):
-            analyzed = apply_filters_and_analysis(
-                raw_comments,
-                keywords,
-                exclude_keywords,
-                search_all,
-                translated_kw_map,
-                no_match_limit,
-                max_matches,
-            )
+        status = st.status("Analyzing...", expanded=True)
+
+        # Step 1: Filter
+        status.update(label="Step 1/4 — Filtering comments...")
+        if search_all:
+            matched = [dict(c) for c in raw_comments]
+        else:
+            all_kw_sets: list[tuple[list[str], str | None]] = [(keywords, None)]
+            for lang_code, kws in translated_kw_map.items():
+                if kws:
+                    all_kw_sets.append((kws, lang_code))
+
+            seen: set[int] = set()
+            matched: list[dict] = []
+            for idx, c in enumerate(raw_comments):
+                for plan_kws, plan_lang in all_kw_sets:
+                    text = c["comment"].lower()
+                    if not any(kw.lower() in text for kw in plan_kws):
+                        continue
+                    if exclude_keywords and any(ex.lower() in text for ex in exclude_keywords):
+                        continue
+                    if idx in seen:
+                        continue
+                    seen.add(idx)
+                    copy = dict(c)
+                    if plan_lang:
+                        copy["_needs_bt"] = plan_lang
+                    matched.append(copy)
+                    break
+
+        if not no_match_limit and len(matched) > max_matches:
+            matched = matched[: int(max_matches)]
+
+        if not matched:
+            status.update(label="No comments matched.", state="error")
+            st.warning("No comments matched your filters.")
+            return
+
+        status.write(f"Found **{len(matched):,}** matches.")
+
+        # Step 2: Back-translate (if needed)
+        needs_bt = [m for m in matched if m.get("_needs_bt")]
+        if needs_bt:
+            status.update(label=f"Step 2/4 — Back-translating {len(needs_bt)} comments...")
+            by_lang: dict[str, list[dict]] = {}
+            for m in needs_bt:
+                by_lang.setdefault(m.pop("_needs_bt"), []).append(m)
+            for lang_code, group in by_lang.items():
+                status.write(f"Translating {len(group)} comments from {lang_code}...")
+                add_back_translations(group, lang_code)
+        else:
+            for m in matched:
+                m.pop("_needs_bt", None)
+            status.write("No back-translations needed.")
+
+        # Step 3: Sentiment
+        status.update(label=f"Step 3/4 — Sentiment analysis on {len(matched):,} comments...")
+        add_sentiment(matched)
+        sentiment_counts = get_sentiment_counts(matched)
+        status.write(
+            f"+{sentiment_counts['Positive']} positive, "
+            f"~{sentiment_counts['Neutral']} neutral, "
+            f"-{sentiment_counts['Negative']} negative"
+        )
+
+        # Step 4: Theme clustering (for AI summary)
+        status.update(label=f"Step 4/4 — Discovering themes...")
+        cluster_into_themes(matched)
+
+        for idx, c in enumerate(matched):
+            c["_id"] = idx
+
+        status.update(label="Analysis complete.", state="complete", expanded=False)
+
+        analyzed = matched
 
         if not analyzed:
             st.warning("No comments matched your filters.")
