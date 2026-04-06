@@ -858,21 +858,18 @@ def main():
         st.caption(f"**Languages detected:** {' · '.join(lang_parts)}")
 
         if non_english:
-            col_bt_info, col_bt_btn = st.columns([0.7, 0.3])
-            with col_bt_info:
-                st.markdown(
-                    f"**{len(non_english):,}** non-English comments without translations."
-                )
-            with col_bt_btn:
-                if st.button("Translate All", key="bulk_translate"):
-                    texts = [c["comment"] for c in non_english]
-                    with st.spinner(f"Translating {len(texts):,} comments in batch..."):
-                        translations = batch_back_translate(texts)
-                    for c, translation in zip(non_english, translations):
-                        c["back_translation"] = translation
-                        c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
-                    st.success(f"Translated **{len(non_english):,}** comments.")
-                    st.rerun()
+            st.caption(
+                f"**{len(non_english):,}** non-English comments without translations."
+            )
+            if st.button("Translate All", key="bulk_translate", type="primary"):
+                texts = [c["comment"] for c in non_english]
+                with st.spinner(f"Translating {len(texts):,} comments in batch..."):
+                    translations = batch_back_translate(texts)
+                for c, translation in zip(non_english, translations):
+                    c["back_translation"] = translation
+                    c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
+                st.success(f"Translated **{len(non_english):,}** comments.")
+                st.rerun()
 
     # --- Preview ---
     st.divider()
