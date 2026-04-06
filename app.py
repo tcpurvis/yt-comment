@@ -631,60 +631,61 @@ def main():
         key="search_all",
     )
 
-    if not search_all:
-        # Preset selector
-        preset_names = ["Custom"] + list(KEYWORD_PRESETS.keys())
-        selected_preset = st.selectbox(
-            "Keyword preset",
-            options=preset_names,
-            help="Load a pre-built keyword set or use your own custom keywords.",
-            key="keyword_preset",
-        )
+    with _analyze_expander:
+        if not search_all:
+            # Preset selector
+            preset_names = ["Custom"] + list(KEYWORD_PRESETS.keys())
+            selected_preset = st.selectbox(
+                "Keyword preset",
+                options=preset_names,
+                help="Load a pre-built keyword set or use your own custom keywords.",
+                key="keyword_preset",
+            )
 
-        if selected_preset != "Custom":
-            preset = KEYWORD_PRESETS[selected_preset]
-            default_kw = ", ".join(preset["keywords"])
-            preset_translations = preset.get("translations", {})
+            if selected_preset != "Custom":
+                preset = KEYWORD_PRESETS[selected_preset]
+                default_kw = ", ".join(preset["keywords"])
+                preset_translations = preset.get("translations", {})
+            else:
+                default_kw = ""
+                preset_translations = {}
+
+            # Update keyword input and clear translation cache when preset changes
+            if st.session_state.get("_last_preset") != selected_preset:
+                st.session_state["keyword_input"] = default_kw
+                st.session_state["_last_preset"] = selected_preset
+                st.session_state.pop("_translation_cache_key", None)
+                st.session_state.pop("_translated_kw_map", None)
+
+            keyword_input = st.text_input(
+                "Filter comments by keywords (comma-separated)",
+                placeholder="e.g. great, awesome, helpful",
+                key="keyword_input",
+            )
+            keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
+
+            exclude_input = st.text_input(
+                "Exclude comments containing (comma-separated)",
+                placeholder="e.g. spam, subscribe, giveaway",
+                help="Comments matching any of these words will be excluded.",
+                key="exclude_input",
+            )
+            exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
         else:
-            default_kw = ""
+            keywords = []
+            exclude_keywords = []
             preset_translations = {}
+            selected_preset = "Custom"
 
-        # Update keyword input and clear translation cache when preset changes
-        if st.session_state.get("_last_preset") != selected_preset:
-            st.session_state["keyword_input"] = default_kw
-            st.session_state["_last_preset"] = selected_preset
-            st.session_state.pop("_translation_cache_key", None)
-            st.session_state.pop("_translated_kw_map", None)
-
-        keyword_input = st.text_input(
-            "Filter comments by keywords (comma-separated)",
-            placeholder="e.g. great, awesome, helpful",
-            key="keyword_input",
+        # --- Multi-Language Search ---
+        selected_langs = st.multiselect(
+            "Also search in these languages",
+            options=list(SUPPORTED_LANGUAGES.keys()),
+            help="Keywords will be translated and matched against cached comments. "
+                 "Matching comments will include a back-translation to English.",
+            key="selected_langs",
         )
-        keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
-
-        exclude_input = st.text_input(
-            "Exclude comments containing (comma-separated)",
-            placeholder="e.g. spam, subscribe, giveaway",
-            help="Comments matching any of these words will be excluded.",
-            key="exclude_input",
-        )
-        exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
-    else:
-        keywords = []
-        exclude_keywords = []
-        preset_translations = {}
-        selected_preset = "Custom"
-
-    # --- Multi-Language Search ---
-    selected_langs = st.multiselect(
-        "Also search in these languages",
-        options=list(SUPPORTED_LANGUAGES.keys()),
-        help="Keywords will be translated and matched against cached comments. "
-             "Matching comments will include a back-translation to English.",
-        key="selected_langs",
-    )
-    selected_lang_codes = [SUPPORTED_LANGUAGES[n] for n in selected_langs]
+        selected_lang_codes = [SUPPORTED_LANGUAGES[n] for n in selected_langs]
 
     # --- Translated keywords preview + edit ---
     translated_kw_map: dict[str, list[str]] = {}
@@ -717,18 +718,18 @@ def main():
 
         stored_map = st.session_state.get("_translated_kw_map", {})
 
-        st.markdown("**Translated keywords** — edit any translation before analyzing:")
-        for lang_name in selected_langs:
-            lang_code = SUPPORTED_LANGUAGES[lang_name]
-            current = stored_map.get(lang_code, [])
-            # Set default for text input if not already in session state
-            if f"trans_{lang_code}" not in st.session_state:
-                st.session_state[f"trans_{lang_code}"] = ", ".join(current)
-            edited = st.text_input(
-                f"{lang_name} ({lang_code})",
-                key=f"trans_{lang_code}",
-            )
-            translated_kw_map[lang_code] = [k.strip() for k in edited.split(",") if k.strip()]
+        with _analyze_expander:
+            st.markdown("**Translated keywords** — edit any translation before analyzing:")
+            for lang_name in selected_langs:
+                lang_code = SUPPORTED_LANGUAGES[lang_name]
+                current = stored_map.get(lang_code, [])
+                if f"trans_{lang_code}" not in st.session_state:
+                    st.session_state[f"trans_{lang_code}"] = ", ".join(current)
+                edited = st.text_input(
+                    f"{lang_name} ({lang_code})",
+                    key=f"trans_{lang_code}",
+                )
+                translated_kw_map[lang_code] = [k.strip() for k in edited.split(",") if k.strip()]
 
     with _analyze_expander:
         _do_analyze = st.button("Apply Filters & Analyze", type="primary")
