@@ -44,27 +44,59 @@ def translate_keywords(keywords: list[str], target_lang: str) -> list[str]:
 
 
 def _translate_with_claude(text: str) -> str | None:
-    """Try translating with Claude API. Returns None if unavailable."""
+    """Try translating a single text with Claude API."""
+    results = _batch_translate_with_claude([text])
+    return results[0] if results else None
+
+
+def _batch_translate_with_claude(texts: list[str], batch_size: int = 25) -> list[str] | None:
+    """Translate multiple texts in batched Claude API calls. Returns None if unavailable."""
     api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return None
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Translate the following text to English. "
-                    f"Return ONLY the translation, nothing else.\n\n{text}"
-                ),
-            }],
-        )
-        return response.content[0].text.strip()
     except Exception:
         return None
+
+    all_results: list[str] = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        numbered = "\n".join(f"[{j+1}] {t}" for j, t in enumerate(batch))
+        try:
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=4096,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Translate each numbered text below to English. "
+                        f"Return ONLY the translations, one per line, keeping the same [N] numbering. "
+                        f"Do not add any other text.\n\n{numbered}"
+                    ),
+                }],
+            )
+            reply = response.content[0].text.strip()
+            # Parse numbered responses
+            translations = {}
+            for line in reply.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                # Match [N] prefix
+                import re as _re
+                m = _re.match(r"\[(\d+)\]\s*(.*)", line)
+                if m:
+                    translations[int(m.group(1))] = m.group(2)
+
+            for j, t in enumerate(batch):
+                all_results.append(translations.get(j + 1, t))
+        except Exception:
+            # If batch fails, return None so caller falls back
+            return None
+
+    return all_results if len(all_results) == len(texts) else None
 
 
 def _translate_with_google(text: str, source_lang: str) -> str | None:
@@ -103,6 +135,17 @@ def back_translate(text: str, source_lang: str = "auto") -> str:
         return result
 
     return text
+
+
+def batch_back_translate(texts: list[str]) -> list[str]:
+    """Translate a list of texts to English in as few API calls as possible."""
+    # Try Claude batch first
+    results = _batch_translate_with_claude(texts)
+    if results:
+        return results
+
+    # Fall back to one-by-one Google Translate
+    return [back_translate(t) for t in texts]
 
 
 def add_back_translations(

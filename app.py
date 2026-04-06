@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 
 from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES, SENTIMENT_COLORS, KEYWORD_PRESETS
 from analysis import add_sentiment, cluster_into_themes, get_theme_summary, get_sentiment_counts
-from translate import translate_keywords, add_back_translations, back_translate, detect_language
+from translate import translate_keywords, add_back_translations, back_translate, batch_back_translate, detect_language
 from report import (
     build_html_report, build_pdf_report,
     _sentiment_badge, _avatar_color, _initials, _format_date,
@@ -842,16 +842,12 @@ def main():
             )
         with col_bt_btn:
             if st.button("Translate All", key="bulk_translate"):
-                progress = st.progress(0, text="Translating...")
-                for i, c in enumerate(non_english):
-                    c["back_translation"] = back_translate(c["comment"])
+                texts = [c["comment"] for c in non_english]
+                with st.spinner(f"Translating {len(texts):,} comments in batch..."):
+                    translations = batch_back_translate(texts)
+                for c, translation in zip(non_english, translations):
+                    c["back_translation"] = translation
                     c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
-                    if (i + 1) % 5 == 0 or i == len(non_english) - 1:
-                        progress.progress(
-                            (i + 1) / len(non_english),
-                            text=f"Translated {i + 1:,}/{len(non_english):,}",
-                        )
-                progress.empty()
                 st.success(f"Translated **{len(non_english):,}** comments.")
                 st.rerun()
 
