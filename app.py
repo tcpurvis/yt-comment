@@ -228,20 +228,23 @@ def apply_filters_and_analysis(
     keywords: list[str],
     exclude_keywords: list[str],
     search_all: bool,
-    selected_lang_codes: list[str],
+    translated_kw_map: dict[str, list[str]],
     no_match_limit: bool,
     max_matches: float,
 ) -> list[dict]:
-    """Filter, translate, sentiment-score, and cluster cached comments."""
+    """Filter, translate, sentiment-score, and cluster cached comments.
+
+    translated_kw_map: {lang_code: [translated_keywords]} — already translated
+    and potentially edited by the user.
+    """
     if search_all:
         matched = [dict(c) for c in raw_comments]  # shallow copies
     else:
-        # Build all keyword sets (English + translated)
+        # Build all keyword sets (English + pre-translated)
         all_kw_sets: list[tuple[list[str], str | None]] = [(keywords, None)]
-        for lang_code in selected_lang_codes:
-            translated_kw = translate_keywords(keywords, lang_code)
-            if translated_kw:
-                all_kw_sets.append((translated_kw, lang_code))
+        for lang_code, kws in translated_kw_map.items():
+            if kws:
+                all_kw_sets.append((kws, lang_code))
 
         # Match against each keyword set, deduplicate, track language
         seen: set[int] = set()
@@ -523,6 +526,34 @@ def main():
     )
     selected_lang_codes = [SUPPORTED_LANGUAGES[n] for n in selected_langs]
 
+    # --- Translated keywords preview + edit ---
+    translated_kw_map: dict[str, list[str]] = {}
+    if selected_langs and keywords and not search_all:
+        # Auto-translate on first run or when keywords/languages change
+        cache_key = f"{','.join(keywords)}|{','.join(selected_langs)}"
+        if st.session_state.get("_translation_cache_key") != cache_key:
+            with st.spinner("Translating keywords..."):
+                new_map = {}
+                for lang_name in selected_langs:
+                    lang_code = SUPPORTED_LANGUAGES[lang_name]
+                    translated = translate_keywords(keywords, lang_code)
+                    new_map[lang_code] = translated
+                st.session_state["_translated_kw_map"] = new_map
+                st.session_state["_translation_cache_key"] = cache_key
+
+        stored_map = st.session_state.get("_translated_kw_map", {})
+
+        st.markdown("**Translated keywords** — edit any translation before analyzing:")
+        for lang_name in selected_langs:
+            lang_code = SUPPORTED_LANGUAGES[lang_name]
+            current = stored_map.get(lang_code, [])
+            edited = st.text_input(
+                f"{lang_name} ({lang_code})",
+                value=", ".join(current),
+                key=f"trans_{lang_code}",
+            )
+            translated_kw_map[lang_code] = [k.strip() for k in edited.split(",") if k.strip()]
+
     if st.button("Apply Filters & Analyze", type="primary"):
         if not search_all and not keywords:
             st.warning("Enter at least one keyword or check 'Return all comments'.")
@@ -534,7 +565,7 @@ def main():
                 keywords,
                 exclude_keywords,
                 search_all,
-                selected_lang_codes,
+                translated_kw_map,
                 no_match_limit,
                 max_matches,
             )
