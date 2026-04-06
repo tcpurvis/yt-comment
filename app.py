@@ -717,12 +717,6 @@ def main():
             )
             translated_kw_map[lang_code] = [k.strip() for k in edited.split(",") if k.strip()]
 
-    skip_bt = st.checkbox(
-        "Skip bulk back-translation",
-        help="Skip translating all matched foreign-language comments to English during analysis. "
-             "You can still translate individual comments in the preview.",
-        key="skip_bt",
-    )
 
     if st.button("Apply Filters & Analyze", type="primary"):
         if not search_all and not keywords:
@@ -732,7 +726,7 @@ def main():
         status = st.status("Analyzing...", expanded=True)
 
         # Step 1: Filter
-        status.update(label="Step 1/4 — Filtering comments...")
+        status.update(label="Step 1/3 — Filtering comments...")
         if search_all:
             matched = [dict(c, matched_language="all") for c in raw_comments]
         else:
@@ -776,28 +770,14 @@ def main():
 
         status.write(f"Found **{len(matched):,}** matches.")
 
-        # Step 2: Back-translate (if needed)
-        needs_bt = [m for m in matched if m.get("_needs_bt")]
-        if needs_bt and not skip_bt:
-            status.update(label=f"Step 2/4 — Back-translating {len(needs_bt)} comments...")
-            by_lang: dict[str, list[dict]] = {}
-            for m in needs_bt:
-                by_lang.setdefault(m.pop("_needs_bt"), []).append(m)
-            for lang_code, group in by_lang.items():
-                status.write(f"Translating {len(group)} comments from {lang_code}...")
-                add_back_translations(group, lang_code)
-        elif needs_bt and skip_bt:
-            # Preserve language info for on-demand translation later
-            for m in needs_bt:
-                m["original_language"] = m.pop("_needs_bt")
-            status.write(f"Skipped back-translation for {len(needs_bt)} comments (translate individually in preview).")
-        else:
-            for m in matched:
-                m.pop("_needs_bt", None)
-            status.write("No back-translations needed.")
+        # Clean up internal flags, preserve language info for later translation
+        for m in matched:
+            bt_lang = m.pop("_needs_bt", None)
+            if bt_lang and not m.get("original_language"):
+                m["original_language"] = bt_lang
 
-        # Step 3: Sentiment
-        status.update(label=f"Step 3/4 — Sentiment analysis on {len(matched):,} comments...")
+        # Step 2: Sentiment
+        status.update(label=f"Step 2/3 — Sentiment analysis on {len(matched):,} comments...")
         add_sentiment(matched)
         sentiment_counts = get_sentiment_counts(matched)
         status.write(
@@ -806,8 +786,8 @@ def main():
             f"-{sentiment_counts['Negative']} negative"
         )
 
-        # Step 4: Theme clustering (for AI summary)
-        status.update(label=f"Step 4/4 — Discovering themes...")
+        # Step 3: Theme clustering (for AI summary)
+        status.update(label="Step 3/3 — Discovering themes...")
         cluster_into_themes(matched)
 
         for idx, c in enumerate(matched):
@@ -883,11 +863,11 @@ def main():
     all_languages = sorted(set(c.get("matched_language", "en") for c in all_comments))
     all_language_labels = [_lang_code_to_name.get(lc, lc) for lc in all_languages]
 
-    if "fs_videos" not in st.session_state or not st.session_state["fs_videos"]:
+    if "fs_videos" not in st.session_state:
         st.session_state["fs_videos"] = all_video_titles
-    if "fs_sentiment" not in st.session_state or not st.session_state["fs_sentiment"]:
+    if "fs_sentiment" not in st.session_state:
         st.session_state["fs_sentiment"] = ["Positive", "Neutral", "Negative"]
-    if "fs_language" not in st.session_state or not st.session_state["fs_language"]:
+    if "fs_language" not in st.session_state:
         st.session_state["fs_language"] = all_language_labels
 
     with st.expander("**Filter & Sort**", expanded=False):
