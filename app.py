@@ -1,4 +1,5 @@
 import re
+import json
 import html as html_mod
 from urllib.parse import urlparse, parse_qs
 
@@ -220,6 +221,24 @@ def main():
              "Set high for viral videos with 200k+ comments.",
     )
 
+    # --- Load previous export ---
+    st.sidebar.header("Load Previous Export")
+    uploaded = st.sidebar.file_uploader(
+        "Upload a comments JSON export",
+        type=["json"],
+        help="Load a previously exported comments file to re-analyze without fetching from YouTube.",
+    )
+    if uploaded is not None:
+        try:
+            data = json.loads(uploaded.read())
+            st.session_state["raw_comments"] = data["comments"]
+            st.session_state["search_query"] = data.get("search_query", "Imported")
+            st.session_state.pop("analyzed_comments", None)
+            st.session_state.pop("hidden_ids", None)
+            st.sidebar.success(f"Loaded **{len(data['comments']):,}** comments.")
+        except Exception as e:
+            st.sidebar.error(f"Failed to load file: {e}")
+
     # --- Main inputs: video source ---
     input_mode = st.radio(
         "How do you want to find videos?",
@@ -307,8 +326,7 @@ def main():
         st.session_state.pop("analyzed_comments", None)
         st.session_state.pop("hidden_ids", None)
 
-        st.success(f"Fetched **{len(raw_comments):,}** comments from **{len(videos)}** video(s). "
-                   "Adjust keywords/languages below and click **Apply Filters & Analyze**.")
+        st.success(f"Fetched **{len(raw_comments):,}** comments from **{len(videos)}** video(s).")
 
     # --- Nothing fetched yet ---
     if "raw_comments" not in st.session_state:
@@ -317,15 +335,27 @@ def main():
     raw_comments = st.session_state["raw_comments"]
     sq = st.session_state["search_query"]
 
-    # ===================================================================
-    # PHASE 2: FILTER & ANALYZE — all inputs shown after fetch
-    # ===================================================================
+    # --- Download raw export ---
     st.divider()
-    st.subheader("Filter & Analyze")
-    st.caption(
-        f"**{len(raw_comments):,}** cached comments available. "
-        "Change filters and re-analyze without re-fetching."
-    )
+    export_data = json.dumps(
+        {"search_query": sq, "comments": raw_comments},
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    col_info, col_dl = st.columns([0.7, 0.3])
+    with col_info:
+        st.subheader("Filter & Analyze")
+        st.caption(
+            f"**{len(raw_comments):,}** cached comments available. "
+            "Change filters and re-analyze without re-fetching."
+        )
+    with col_dl:
+        st.download_button(
+            label="Export Raw Comments (JSON)",
+            data=export_data,
+            file_name="youtube_comments_raw.json",
+            mime="application/json",
+        )
 
     search_all = st.checkbox(
         "Return all comments (skip keyword filter)",
