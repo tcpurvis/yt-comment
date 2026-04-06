@@ -812,8 +812,7 @@ def main():
         st.session_state.pop("ai_summary", None)
         # Reset filter/sort state for fresh results
         for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
-                   "fs_text_exclude", "fs_author_search", "fs_min_likes", "fs_sort",
-                   "fs_reply_type"]:
+                   "fs_text_exclude", "fs_min_likes", "fs_sort", "fs_reply_type"]:
             st.session_state.pop(k, None)
         st.success(f"**{len(analyzed):,}** comments match your filters.")
 
@@ -894,10 +893,10 @@ def main():
                 key="fs_sentiment",
             )
 
-        # Language filter
+        # Row 2: Language filter (if multiple) + empty or language takes full row
         if len(all_languages) > 1:
-            filter_col_lang1, filter_col_lang2 = st.columns(2)
-            with filter_col_lang1:
+            filter_row2_l, filter_row2_r = st.columns(2)
+            with filter_row2_l:
                 selected_language_labels = st.multiselect(
                     "Filter by matched language",
                     options=all_language_labels,
@@ -906,18 +905,15 @@ def main():
         else:
             selected_language_labels = all_language_labels
 
-        filter_col3, filter_col4 = st.columns(2)
-
-        # Text search
-        with filter_col3:
+        # Row 3: Text search + Does not contain
+        filter_row3_l, filter_row3_r = st.columns(2)
+        with filter_row3_l:
             text_search = st.text_input(
                 "Search within comments",
                 placeholder="e.g. auto-generated",
                 key="fs_text_search",
             )
-
-        # Does not contain
-        with filter_col4:
+        with filter_row3_r:
             text_exclude = st.text_input(
                 "Does not contain",
                 placeholder="e.g. spam, bot, fake",
@@ -925,24 +921,11 @@ def main():
                 help="Exclude comments containing any of these words (comma-separated).",
             )
 
-        filter_col3b, filter_col4b = st.columns(2)
-
-        # Author filter
-        with filter_col3b:
-            author_search = st.text_input(
-                "Filter by author",
-                placeholder="e.g. @username",
-                key="fs_author_search",
-            )
-
-        filter_col5, filter_col6 = st.columns(2)
-
-        # Min likes
-        with filter_col5:
+        # Row 4: Min likes + Sort
+        filter_row4_l, filter_row4_r = st.columns(2)
+        with filter_row4_l:
             min_likes = st.number_input("Min likes", min_value=0, value=0, step=1, key="fs_min_likes")
-
-        # Sort
-        with filter_col6:
+        with filter_row4_r:
             sort_options = {
                 "Date (newest)": ("date", True),
                 "Date (oldest)": ("date", False),
@@ -952,7 +935,7 @@ def main():
             }
             sort_choice = st.selectbox("Sort by", options=list(sort_options.keys()), key="fs_sort")
 
-        # Reply filter
+        # Row 5: Comment type
         show_replies = st.radio(
             "Comment type",
             ["All", "Top-level only", "Replies only"],
@@ -984,10 +967,6 @@ def main():
             c for c in display_comments
             if not any(w in c["comment"].lower() for w in exclude_words)
         ]
-
-    if author_search:
-        author_search_lower = author_search.lower()
-        display_comments = [c for c in display_comments if author_search_lower in c["author"].lower()]
 
     if min_likes > 0:
         display_comments = [c for c in display_comments if c.get("likes", 0) >= min_likes]
