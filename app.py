@@ -190,6 +190,9 @@ def fetch_comments(
     Fetches using both 'time' and 'relevance' ordering and deduplicates
     to maximize coverage on large videos where a single pass may miss
     comments due to YouTube API pagination limits.
+
+    Checks st.session_state["_stop_fetch"] between pages to allow
+    the user to stop early and keep what was fetched.
     """
     seen_ids: set[str] = set()
     comments: list[dict] = []
@@ -206,6 +209,10 @@ def fetch_comments(
         consecutive_failures = 0
         stale_pages = 0
         while request:
+            # Check stop flag
+            if st.session_state.get("_stop_fetch"):
+                return comments
+
             if max_comments is not None and len(comments) >= max_comments:
                 break
             try:
@@ -395,6 +402,21 @@ def main():
             unsafe_allow_html=True,
         )
 
+    # --- Recover partial fetch ---
+    if "_fetch_in_progress" in st.session_state and st.session_state["_fetch_in_progress"]:
+        partial = st.session_state["_fetch_in_progress"]
+        st.warning(f"A previous fetch was interrupted with **{len(partial):,}** comments saved.")
+        if st.button("Use these comments", key="_use_partial"):
+            st.session_state["raw_comments"] = partial
+            st.session_state["search_query"] = st.session_state.get("search_query", "Interrupted fetch")
+            st.session_state.pop("_fetch_in_progress", None)
+            st.session_state.pop("analyzed_comments", None)
+            st.session_state.pop("hidden_ids", None)
+            st.rerun()
+        if st.button("Discard and start over", key="_discard_partial"):
+            st.session_state.pop("_fetch_in_progress", None)
+            st.rerun()
+
     # ===================================================================
     # PHASE 1: FETCH — hits the API, stores raw comments in session state
     # ===================================================================
@@ -439,10 +461,15 @@ def main():
             return
 
         raw_comments: list[dict] = []
+        st.session_state["_stop_fetch"] = False
+        st.session_state["_fetch_in_progress"] = []
         status = st.status("Fetching comments...", expanded=True)
+
         try:
             # Pass 1: Fetch top-level comments
             for i, video in enumerate(videos):
+                if st.session_state.get("_stop_fetch"):
+                    break
                 counter = status.empty()
                 video_label = video["title"][:50]
 
@@ -457,19 +484,23 @@ def main():
                 for c in batch:
                     c["video_title"] = video["title"]
                 raw_comments.extend(batch)
+                # Save progress so partial results survive interruption
+                st.session_state["_fetch_in_progress"] = list(raw_comments)
                 counter.markdown(
                     f"**{video_label}** — {len(batch):,} top-level ✓ "
                     f"({len(raw_comments):,} total)"
                 )
 
             # Pass 2: Fetch replies (separate pass so failures don't break main fetch)
-            if include_replies:
+            if include_replies and not st.session_state.get("_stop_fetch"):
                 comments_with_replies = [c for c in raw_comments if c.get("replies", 0) > 0]
                 if comments_with_replies:
                     reply_counter = status.empty()
                     total_replies = 0
                     failed_replies = 0
                     for j, c in enumerate(comments_with_replies):
+                        if st.session_state.get("_stop_fetch"):
+                            break
                         try:
                             replies = fetch_replies(youtube, c["comment_id"], c["video_id"])
                             for r in replies:
@@ -500,10 +531,18 @@ def main():
                 st.error(f"**YouTube API error ({e.resp.status}):** {reason}")
                 return
 
-        status.update(
-            label=f"Fetched {len(raw_comments):,} comments from {len(videos)} video(s).",
-            state="complete", expanded=False,
-        )
+        was_stopped = st.session_state.get("_stop_fetch", False)
+        if was_stopped:
+            status.update(
+                label=f"Stopped — saved {len(raw_comments):,} comments fetched so far.",
+                state="complete", expanded=False,
+            )
+        else:
+            status.update(
+                label=f"Fetched {len(raw_comments):,} comments from {len(videos)} video(s).",
+                state="complete", expanded=False,
+            )
+        st.session_state.pop("_fetch_in_progress", None)
 
         # Store raw (unfiltered) comments
         st.session_state["raw_comments"] = raw_comments
