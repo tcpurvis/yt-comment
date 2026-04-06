@@ -353,7 +353,7 @@ def build_pdf_report(
     pdf.cell(0, 6, "Sentiment by VADER  |  Themes by TF-IDF + KMeans",
              align="C", new_x="LMARGIN", new_y="NEXT")
 
-    return pdf.output()
+    return bytes(pdf.output())
 
 
 def _draw_sentiment_bar(pdf: FPDF, counts: dict, total: int):
