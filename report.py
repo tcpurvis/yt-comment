@@ -1,5 +1,7 @@
 import html
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+_ET = timezone(timedelta(hours=-5))
 
 from fpdf import FPDF
 
@@ -149,7 +151,7 @@ def build_html_report(
     """Build a complete HTML report grouped by sentiment with AI summary."""
     sentiment_counts = get_sentiment_counts(comments)
     total = len(comments)
-    now = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    now = datetime.now(_ET).strftime("%B %d, %Y at %I:%M %p ET")
 
     kw_display = ", ".join(keywords) if keywords else "None"
     multi_video = len(set(c.get("video_title", "") for c in comments)) > 1
@@ -337,7 +339,7 @@ def build_pdf_report(
     """Build a styled PDF report grouped by sentiment."""
     sentiment_counts = get_sentiment_counts(comments)
     total = len(comments)
-    now = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    now = datetime.now(_ET).strftime("%B %d, %Y at %I:%M %p ET")
     multi_video = len(set(c.get("video_title", "") for c in comments)) > 1
 
     # Determine keyword display: preset name or keyword list
