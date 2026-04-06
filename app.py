@@ -64,15 +64,24 @@ def fetch_comments(youtube, video_id: str, max_comments: int = 100) -> list[dict
     return comments[:max_comments]
 
 
-def filter_comments(comments: list[dict], keywords: list[str]) -> list[dict]:
-    """Keep comments where any keyword appears (case-insensitive)."""
+def filter_comments(
+    comments: list[dict],
+    keywords: list[str],
+    exclude_keywords: list[str] | None = None,
+) -> list[dict]:
+    """Keep comments where any keyword appears and no exclude keyword appears (case-insensitive)."""
     if not keywords:
         return comments
-    return [
-        c
-        for c in comments
-        if any(kw.lower() in c["comment"].lower() for kw in keywords)
-    ]
+    exclude_keywords = exclude_keywords or []
+    results = []
+    for c in comments:
+        text = c["comment"].lower()
+        if not any(kw.lower() in text for kw in keywords):
+            continue
+        if exclude_keywords and any(ex.lower() in text for ex in exclude_keywords):
+            continue
+        results.append(c)
+    return results
 
 
 def main():
@@ -91,12 +100,15 @@ def main():
     # --- Sidebar ---
     st.sidebar.header("Settings")
     max_videos = st.sidebar.slider("Max videos to search", 1, 50, 10)
-    max_scan = st.sidebar.slider(
-        "Comments to scan per video", 10, 1000, 200,
-        help="How deep to search into each video's comments for keyword matches.",
+    max_scan = st.sidebar.number_input(
+        "Comments to scan per video", min_value=100, max_value=250_000,
+        value=5000, step=1000,
+        help="How deep to search into each video's comments for keyword matches. "
+             "Set high for viral videos with 200k+ comments.",
     )
-    max_matches = st.sidebar.slider(
-        "Max matched comments to return", 10, 500, 100,
+    max_matches = st.sidebar.number_input(
+        "Max matched comments to return", min_value=10, max_value=10_000,
+        value=200, step=50,
         help="Stop collecting once this many keyword-matched comments are found across all videos.",
     )
     max_themes = st.sidebar.slider("Max themes", 2, 12, 6)
@@ -119,6 +131,13 @@ def main():
         placeholder="e.g. great, awesome, helpful",
     )
     keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
+
+    exclude_input = st.text_input(
+        "Exclude comments containing (comma-separated)",
+        placeholder="e.g. spam, subscribe, giveaway",
+        help="Comments matching any of these words will be excluded, even if they match the keywords above.",
+    )
+    exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
 
     if st.button("Fetch & Analyze", type="primary"):
         if not search_query:
@@ -167,7 +186,7 @@ def main():
                 comments = fetch_comments(youtube, video["video_id"], max_scan)
                 for c in comments:
                     c["video_title"] = video["title"]
-                filtered = filter_comments(comments, plan["keywords"])
+                filtered = filter_comments(comments, plan["keywords"], exclude_keywords)
 
                 if plan["lang"]:
                     filtered = add_back_translations(filtered, plan["lang"])
@@ -193,28 +212,67 @@ def main():
             f"across **{total_plans}** language(s)."
         )
 
-        # --- Build report ---
-        html_report = build_html_report(all_comments, search_query, keywords)
+        # Assign each comment a stable id for hiding
+        for idx, c in enumerate(all_comments):
+            c["_id"] = idx
 
-        # Build PDF while we have the data
-        pdf_bytes = build_pdf_report(all_comments, search_query, keywords)
+        # Store in session state
+        st.session_state["all_comments"] = all_comments
+        st.session_state["hidden_ids"] = set()
+        st.session_state["search_query"] = search_query
+        st.session_state["keywords"] = keywords
 
-        # Store in session state so it persists across reruns
-        st.session_state["report_html"] = html_report
-        st.session_state["report_pdf"] = pdf_bytes
-
-    # --- Display report if available ---
-    if "report_html" not in st.session_state:
+    # --- Nothing fetched yet ---
+    if "all_comments" not in st.session_state:
         return
+
+    all_comments = st.session_state["all_comments"]
+    hidden_ids = st.session_state["hidden_ids"]
+
+    # --- Hide comments UI ---
+    st.divider()
+    st.subheader("Review Comments")
+    st.caption(
+        "Un-check any comment to exclude it from the preview and PDF export."
+    )
+
+    visible_comments = []
+    for c in all_comments:
+        cid = c["_id"]
+        # Build a short label: author + first 80 chars of comment
+        preview = c["comment"][:80].replace("\n", " ")
+        label = f"**{c['author']}**: {preview}..."
+        kept = st.checkbox(label, value=(cid not in hidden_ids), key=f"cb_{cid}")
+        if kept:
+            hidden_ids.discard(cid)
+            visible_comments.append(c)
+        else:
+            hidden_ids.add(cid)
+
+    st.session_state["hidden_ids"] = hidden_ids
+
+    if not visible_comments:
+        st.warning("All comments are hidden. Check at least one to generate a report.")
+        return
+
+    hidden_count = len(all_comments) - len(visible_comments)
+    if hidden_count:
+        st.info(f"Hiding **{hidden_count}** comment(s). Report will include **{len(visible_comments)}**.")
+
+    # --- Build report from visible comments only ---
+    query = st.session_state["search_query"]
+    kws = st.session_state["keywords"]
+    html_report = build_html_report(visible_comments, query, kws)
+    pdf_bytes = build_pdf_report(visible_comments, query, kws)
 
     st.divider()
     st.subheader("Report Preview")
-    components.html(st.session_state["report_html"], height=800, scrolling=True)
+    components.html(html_report, height=800, scrolling=True)
 
     # --- PDF download ---
     st.download_button(
         label="Download PDF Report",
-        data=st.session_state["report_pdf"],
+        data=pdf_bytes,
         file_name="youtube_comment_report.pdf",
         mime="application/pdf",
         type="primary",
