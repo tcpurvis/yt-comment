@@ -21,9 +21,9 @@ SUPPORTED_LANGUAGES = {
 }
 
 SENTIMENT_COLORS = {
-    "Positive": "#2e7d32",
-    "Negative": "#c62828",
-    "Neutral": "#616161",
+    "Positive": "#5CEAAF",
+    "Negative": "#F87171",
+    "Neutral": "#A78BFA",
 }
 
 # Pre-built keyword filter presets

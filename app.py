@@ -996,10 +996,11 @@ def main():
             color = SENTIMENT_COLORS[label]
             emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
             if pct > 0:
+                text_color = "#1a1a1a" if label == "Positive" else "#fff"
                 _bar_html += (
                     f'<div style="flex:{pct};background:{color};height:32px;'
                     f'display:flex;align-items:center;justify-content:center;'
-                    f'color:#fff;font-size:12px;font-weight:600;'
+                    f'color:{text_color};font-size:12px;font-weight:600;'
                     f'min-width:{40 if pct > 3 else 0}px;">'
                     f'{emoji} {count} ({pct:.0f}%)</div>'
                 )

@@ -20,11 +20,12 @@ def _avatar_color(name: str) -> str:
 
 
 def _sentiment_badge(label: str) -> str:
-    color = SENTIMENT_COLORS.get(label, "#616161")
+    color = SENTIMENT_COLORS.get(label, "#A78BFA")
     emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}.get(label, "")
+    text_color = "#1a1a1a" if label == "Positive" else "#fff"
     return (
         f'<span style="display:inline-block;padding:2px 10px;border-radius:12px;'
-        f'font-size:11px;font-weight:600;color:#fff;background:{color};">'
+        f'font-size:11px;font-weight:600;color:{text_color};background:{color};">'
         f'{emoji} {label}</span>'
     )
 
@@ -431,7 +432,10 @@ def _draw_sentiment_bar(pdf: FPDF, counts: dict, total: int):
         if seg_w > 20:
             pdf.set_xy(x0, y0)
             pdf.set_font("Helvetica", "B", 7)
-            pdf.set_text_color(255, 255, 255)
+            if label == "Positive":
+                pdf.set_text_color(26, 26, 26)
+            else:
+                pdf.set_text_color(255, 255, 255)
             pdf.cell(seg_w, bar_h, f"{count} ({pct:.0%})", align="C")
         x0 += seg_w
 
