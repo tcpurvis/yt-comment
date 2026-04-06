@@ -206,6 +206,31 @@ def main():
     )
     exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
 
+    # --- Quota estimate (sidebar, rendered after all inputs are known) ---
+    if input_mode == "Paste video URLs":
+        _est_videos = len(extract_video_ids(url_input)) if url_input.strip() else 1
+        _search_cost = 0
+    else:
+        _est_videos = max_videos
+        _search_cost = ((_est_videos + 49) // 50) * 100
+
+    _pages_per_video = (max_scan + 99) // 100
+    _comment_cost = _est_videos * _pages_per_video
+    _lang_multiplier = 1 + len(selected_langs)
+    _total_est = (_search_cost + _comment_cost) * _lang_multiplier
+
+    _pct = min(_total_est / 10_000 * 100, 100)
+    _color = "🟢" if _pct < 25 else "🟡" if _pct < 60 else "🔴"
+    st.sidebar.divider()
+    st.sidebar.markdown(
+        f"### API Quota Estimate\n"
+        f"{_color} **~{_total_est:,} units** of 10,000 daily quota ({_pct:.0f}%)\n\n"
+        f"<small>{_est_videos} video(s) &times; {_pages_per_video:,} pages/video "
+        f"&times; {_lang_multiplier} language(s)"
+        f"{f' + {_search_cost} search' if _search_cost else ''}</small>",
+        unsafe_allow_html=True,
+    )
+
     if st.button("Fetch & Analyze", type="primary"):
         if not keywords:
             st.warning("Enter at least one keyword to filter comments.")
