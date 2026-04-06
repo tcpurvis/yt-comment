@@ -1437,6 +1437,39 @@ def main():
 
     st.caption(f"Showing **{total:,}** comments")
 
+    # Bulk sentiment change
+    with st.expander("**Bulk Actions**", expanded=False):
+        bulk_col1, bulk_col2, bulk_col3 = st.columns([0.4, 0.3, 0.3])
+        with bulk_col1:
+            bulk_target = st.selectbox(
+                "Change selected comments to",
+                options=["Positive", "Neutral", "Negative"],
+                key="bulk_sentiment_target",
+                label_visibility="collapsed",
+            )
+        with bulk_col2:
+            bulk_scope = st.radio(
+                "Apply to",
+                ["Checked comments", "All visible"],
+                horizontal=True,
+                key="bulk_sentiment_scope",
+            )
+        with bulk_col3:
+            if st.button("Apply Sentiment Change", key="bulk_sentiment_apply"):
+                changed = 0
+                for c in display_comments:
+                    if bulk_scope == "Checked comments" and c["_id"] in hidden_ids:
+                        continue
+                    if c["sentiment_label"] != bulk_target:
+                        c["sentiment_label"] = bulk_target
+                        c["sentiment_override"] = True
+                        changed += 1
+                if changed:
+                    st.success(f"Changed **{changed:,}** comments to **{bulk_target}**.")
+                    st.rerun()
+                else:
+                    st.info("No comments changed.")
+
     # Render sentiment-grouped comment cards with checkboxes
     for label, group_comments in sentiment_groups.items():
         emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
