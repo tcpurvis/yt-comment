@@ -318,34 +318,11 @@ def main():
     )
 
     if input_mode == "Upload previous export":
-        upload_col, export_col = st.columns(2)
-        with upload_col:
-            uploaded = st.file_uploader(
-                "Upload a comments JSON export",
-                type=["json"],
-                help="Load a previously exported comments file to re-analyze without fetching from YouTube.",
-            )
-        with export_col:
-            if "raw_comments" in st.session_state:
-                from datetime import datetime as _dt
-                _exp_ts = _dt.now().strftime("%Y-%m-%d_%H%M%S")
-                _raw = st.session_state["raw_comments"]
-                _sq = st.session_state.get("search_query", "export")
-                _vtitles = sorted(set(c.get("video_title", "") for c in _raw if c.get("video_title")))
-                _tslug = re.sub(r"[^\w\s-]", "", _vtitles[0] if len(_vtitles) == 1 else "multiple_videos")
-                _tslug = re.sub(r"\s+", "_", _tslug.strip())[:50]
-                _exp_data = json.dumps({"search_query": _sq, "comments": _raw}, ensure_ascii=False).encode("utf-8")
-                st.download_button(
-                    label="Export Raw Comments (JSON)",
-                    data=_exp_data,
-                    file_name=f"{_tslug}_{_exp_ts}.json",
-                    mime="application/json",
-                )
-            else:
-                st.caption("No comments loaded yet.")
-
-        st.caption("Download comments as JSON to avoid another API pull when revisiting this analysis later.")
-
+        uploaded = st.file_uploader(
+            "Upload a comments JSON export",
+            type=["json"],
+            help="Load a previously exported comments file to re-analyze without fetching from YouTube.",
+        )
         if uploaded is not None:
             upload_id = f"{uploaded.name}_{uploaded.size}"
             if st.session_state.get("_last_upload_id") != upload_id:
@@ -619,6 +596,24 @@ def main():
                 f"**{vt}** — {len(v_comments):,} total "
                 f"({v_top:,} top-level, {v_replies:,} replies)"
             )
+
+    # Export JSON (only for fetch flows, not uploads)
+    if input_mode != "Upload previous export":
+        from datetime import datetime as _dt
+        _exp_ts_j = _dt.now().strftime("%Y-%m-%d_%H%M%S")
+        _vtitles_j = sorted(set(c.get("video_title", "") for c in raw_comments if c.get("video_title")))
+        _tslug_j = re.sub(r"[^\w\s-]", "", _vtitles_j[0] if len(_vtitles_j) == 1 else "multiple_videos")
+        _tslug_j = re.sub(r"\s+", "_", _tslug_j.strip())[:50]
+        _exp_data = json.dumps(
+            {"search_query": sq, "comments": raw_comments}, ensure_ascii=False
+        ).encode("utf-8")
+        st.download_button(
+            label="Export Raw Comments (JSON)",
+            data=_exp_data,
+            file_name=f"{_tslug_j}_{_exp_ts_j}.json",
+            mime="application/json",
+        )
+        st.caption("Download comments as JSON to avoid another API pull when revisiting this analysis later.")
 
     _analysis_done = "analyzed_comments" in st.session_state
     _analyze_expander = st.expander(
