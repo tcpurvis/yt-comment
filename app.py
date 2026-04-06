@@ -130,7 +130,7 @@ def get_video_info(youtube, video_ids: list[str]) -> list[dict]:
     return videos
 
 
-def fetch_replies(youtube, parent_id: str) -> list[dict]:
+def fetch_replies(youtube, parent_id: str, video_id: str) -> list[dict]:
     """Fetch all replies for a top-level comment."""
     replies = []
     request = youtube.comments().list(
@@ -153,7 +153,7 @@ def fetch_replies(youtube, parent_id: str) -> list[dict]:
                     "likes": s["likeCount"],
                     "replies": 0,
                     "date": s["publishedAt"],
-                    "video_id": s["videoId"],
+                    "video_id": s.get("videoId", video_id),
                     "is_reply": True,
                     "parent_id": parent_id,
                 }
@@ -195,7 +195,7 @@ def fetch_comments(
                 }
             )
             if include_replies and reply_count > 0:
-                replies = fetch_replies(youtube, thread_id)
+                replies = fetch_replies(youtube, thread_id, video_id)
                 comments.extend(replies)
         request = youtube.commentThreads().list_next(request, response)
     return comments[:max_comments]
