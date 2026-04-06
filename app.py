@@ -685,6 +685,10 @@ def main():
         st.session_state["hidden_ids"] = set()
         st.session_state["keywords"] = keywords
         st.session_state.pop("ai_summary", None)
+        # Reset filter/sort state for fresh results
+        for k in ["fs_videos", "fs_sentiment", "fs_text_search", "fs_author_search",
+                   "fs_min_likes", "fs_sort", "fs_reply_type"]:
+            st.session_state.pop(k, None)
         st.success(f"**{len(analyzed):,}** comments match your filters.")
 
     # --- Nothing analyzed yet ---
@@ -701,17 +705,23 @@ def main():
     st.caption("Un-check any comment to exclude it from the report and PDF.")
 
     # --- Filters & Sort ---
+    # Initialize filter defaults in session state on first analysis
+    all_video_titles = sorted(set(c.get("video_title", "") for c in all_comments))
+    if "fs_videos" not in st.session_state:
+        st.session_state["fs_videos"] = all_video_titles
+    if "fs_sentiment" not in st.session_state:
+        st.session_state["fs_sentiment"] = ["Positive", "Neutral", "Negative"]
+
     with st.expander("**Filter & Sort**", expanded=False):
         filter_col1, filter_col2 = st.columns(2)
 
         # Video filter
-        all_video_titles = sorted(set(c.get("video_title", "") for c in all_comments))
         if len(all_video_titles) > 1:
             with filter_col1:
                 selected_videos = st.multiselect(
                     "Filter by video",
                     options=all_video_titles,
-                    default=all_video_titles,
+                    key="fs_videos",
                 )
         else:
             selected_videos = all_video_titles
@@ -721,7 +731,7 @@ def main():
             selected_sentiments = st.multiselect(
                 "Filter by sentiment",
                 options=["Positive", "Neutral", "Negative"],
-                default=["Positive", "Neutral", "Negative"],
+                key="fs_sentiment",
             )
 
         filter_col3, filter_col4 = st.columns(2)
@@ -731,6 +741,7 @@ def main():
             text_search = st.text_input(
                 "Search within comments",
                 placeholder="e.g. auto-generated",
+                key="fs_text_search",
             )
 
         # Author filter
@@ -738,13 +749,14 @@ def main():
             author_search = st.text_input(
                 "Filter by author",
                 placeholder="e.g. @username",
+                key="fs_author_search",
             )
 
         filter_col5, filter_col6 = st.columns(2)
 
         # Min likes
         with filter_col5:
-            min_likes = st.number_input("Min likes", min_value=0, value=0, step=1)
+            min_likes = st.number_input("Min likes", min_value=0, value=0, step=1, key="fs_min_likes")
 
         # Sort
         with filter_col6:
@@ -755,13 +767,14 @@ def main():
                 "Likes (fewest)": ("likes", False),
                 "Author (A-Z)": ("author", False),
             }
-            sort_choice = st.selectbox("Sort by", options=list(sort_options.keys()))
+            sort_choice = st.selectbox("Sort by", options=list(sort_options.keys()), key="fs_sort")
 
         # Reply filter
         show_replies = st.radio(
             "Comment type",
             ["All", "Top-level only", "Replies only"],
             horizontal=True,
+            key="fs_reply_type",
         )
 
     # Apply filters
