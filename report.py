@@ -271,6 +271,40 @@ def _safe(text: str) -> str:
     return text
 
 
+def _render_markdown_text(pdf: FPDF, text: str, font_size: float = 9, line_height: float = 4.5):
+    """Render text with **bold** markdown and - bullet points into the PDF."""
+    import re as _re
+    width = pdf.w - 20
+
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            pdf.ln(line_height)
+            continue
+
+        # Handle bullet points
+        if line.startswith("- "):
+            pdf.set_x(14)
+            pdf.set_font("Lato", "", font_size)
+            pdf.cell(4, line_height, chr(8226), new_x="END")  # bullet char
+            line = line[2:]
+            indent_w = width - 8
+        else:
+            pdf.set_x(10)
+            indent_w = width
+
+        # Split by **bold** markers
+        parts = _re.split(r"(\*\*.*?\*\*)", line)
+        for part in parts:
+            if part.startswith("**") and part.endswith("**"):
+                pdf.set_font("Lato", "B", font_size)
+                pdf.write(line_height, part[2:-2])
+            else:
+                pdf.set_font("Lato", "", font_size)
+                pdf.write(line_height, part)
+        pdf.ln(line_height)
+
+
 import os as _os
 _FONT_DIR = _os.path.join(_os.path.dirname(__file__), "fonts")
 
@@ -377,10 +411,8 @@ def build_pdf_report(
         pdf.set_text_color(26, 26, 26)
         pdf.cell(0, 8, "AI Theme Summary", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
-        pdf.set_font("Lato", "", 9)
         pdf.set_text_color(26, 26, 26)
-        summary_text = _safe(ai_summary)
-        pdf.multi_cell(pdf.w - 20, 4.5, summary_text, new_x="LMARGIN", new_y="NEXT")
+        _render_markdown_text(pdf, ai_summary)
         pdf.ln(4)
 
     # ---- Divider line 2 (under overview section) ----

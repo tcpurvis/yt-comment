@@ -298,7 +298,7 @@ def filter_comments(
 
 
 def main():
-    st.set_page_config(page_title="YouTube Comment Analysis", layout="wide")
+    st.set_page_config(page_title="BEAST | YouTube Comment Analysis", layout="wide")
     st.title("YouTube Comment Analysis")
     st.caption("Search · Analyze sentiment · Discover themes · Export PDF")
 
@@ -1016,30 +1016,28 @@ def main():
     if visible_comments:
         ai_summary = st.session_state.get("ai_summary", "")
 
-        col_ai, col_pdf = st.columns([0.5, 0.5])
-        with col_ai:
-            if st.button("Generate AI Summary", type="secondary", key="gen_ai_summary"):
-                with st.spinner("Generating AI theme summary from selected comments..."):
-                    ai_summary = generate_ai_summary(visible_comments, sq)
-                    st.session_state["ai_summary"] = ai_summary
-        with col_pdf:
-            _preset = st.session_state.get("keyword_preset", "Custom")
-            pdf_bytes = build_pdf_report(
-                visible_comments, sq, kws,
-                ai_summary=ai_summary,
-                preset_name=_preset,
-            )
-            st.download_button(
-                label="Download PDF Report",
-                data=pdf_bytes,
-                file_name=f"{_title_slug}_{_export_ts}_report.pdf",
-                mime="application/pdf",
-                type="primary",
-            )
+        if st.button("Generate AI Summary", type="secondary", key="gen_ai_summary"):
+            with st.spinner("Generating AI theme summary from selected comments..."):
+                ai_summary = generate_ai_summary(visible_comments, sq)
+                st.session_state["ai_summary"] = ai_summary
 
         if ai_summary:
             with st.expander("**AI Theme Summary**", expanded=True):
                 st.markdown(ai_summary)
+
+        _preset = st.session_state.get("keyword_preset", "Custom")
+        pdf_bytes = build_pdf_report(
+            visible_comments, sq, kws,
+            ai_summary=ai_summary,
+            preset_name=_preset,
+        )
+        st.download_button(
+            label="Download PDF Report",
+            data=pdf_bytes,
+            file_name=f"{_title_slug}_{_export_ts}_report.pdf",
+            mime="application/pdf",
+            type="primary",
+        )
 
     hidden_count = len(display_comments) - len(visible_comments)
     if hidden_count:
