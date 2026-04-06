@@ -837,6 +837,35 @@ def main():
     hidden_ids = st.session_state.get("hidden_ids", set())
     kws = st.session_state.get("keywords", [])
 
+    # --- Bulk back-translate ---
+    non_english = [
+        c for c in all_comments
+        if c.get("matched_language", "en") != "en"
+        and c.get("matched_language") != "all"
+        and (not c.get("back_translation") or c["back_translation"] == c["comment"])
+    ]
+    if non_english:
+        st.divider()
+        col_bt_info, col_bt_btn = st.columns([0.7, 0.3])
+        with col_bt_info:
+            st.markdown(
+                f"**{len(non_english):,}** non-English comments without translations."
+            )
+        with col_bt_btn:
+            if st.button("Translate All", key="bulk_translate"):
+                progress = st.progress(0, text="Translating...")
+                for i, c in enumerate(non_english):
+                    c["back_translation"] = back_translate(c["comment"])
+                    c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
+                    if (i + 1) % 5 == 0 or i == len(non_english) - 1:
+                        progress.progress(
+                            (i + 1) / len(non_english),
+                            text=f"Translated {i + 1:,}/{len(non_english):,}",
+                        )
+                progress.empty()
+                st.success(f"Translated **{len(non_english):,}** comments.")
+                st.rerun()
+
     # --- Preview ---
     st.divider()
     st.subheader("Report Preview")

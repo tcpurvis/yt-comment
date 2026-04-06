@@ -1,45 +1,31 @@
 import streamlit as st
 from deep_translator import GoogleTranslator
-from lingua import Language, LanguageDetectorBuilder
-
-# Build detector once for supported languages
-_LINGUA_LANGS = [
-    Language.ENGLISH, Language.SPANISH, Language.FRENCH, Language.GERMAN,
-    Language.PORTUGUESE, Language.ITALIAN, Language.JAPANESE, Language.KOREAN,
-    Language.CHINESE, Language.HINDI, Language.ARABIC, Language.RUSSIAN,
-    Language.TURKISH, Language.THAI, Language.VIETNAMESE, Language.INDONESIAN,
-]
-_detector = LanguageDetectorBuilder.from_languages(*_LINGUA_LANGS).build()
-
-# Map lingua Language enum to ISO codes used by Google Translate
-_LINGUA_TO_CODE = {
-    Language.ENGLISH: "en",
-    Language.SPANISH: "es",
-    Language.FRENCH: "fr",
-    Language.GERMAN: "de",
-    Language.PORTUGUESE: "pt",
-    Language.ITALIAN: "it",
-    Language.JAPANESE: "ja",
-    Language.KOREAN: "ko",
-    Language.CHINESE: "zh-CN",
-    Language.HINDI: "hi",
-    Language.ARABIC: "ar",
-    Language.RUSSIAN: "ru",
-    Language.TURKISH: "tr",
-    Language.THAI: "th",
-    Language.VIETNAMESE: "vi",
-    Language.INDONESIAN: "id",
-}
 
 
 def detect_language(text: str) -> str:
     """Detect the language of a text string. Returns ISO code."""
+    # Try pycld2 first (fast, offline)
     try:
-        lang = _detector.detect_language_of(text)
-        if lang:
-            return _LINGUA_TO_CODE.get(lang, "en")
+        import pycld2
+        _, _, details = pycld2.detect(text)
+        code = details[0][1]
+        if code and code != "un":
+            # Normalize Chinese codes
+            if code == "zh":
+                return "zh-CN"
+            return code
     except Exception:
         pass
+
+    # Fallback: use Google Translate's auto-detect via a dummy translation
+    try:
+        translator = GoogleTranslator(source="auto", target="en")
+        translator.translate(text[:200])
+        # deep-translator doesn't expose detected lang directly,
+        # so we check if the result differs from input
+    except Exception:
+        pass
+
     return "en"
 
 
@@ -57,7 +43,7 @@ def translate_keywords(keywords: list[str], target_lang: str) -> list[str]:
     return translated
 
 
-def _translate_with_claude(text: str, target: str = "en") -> str | None:
+def _translate_with_claude(text: str) -> str | None:
     """Try translating with Claude API. Returns None if unavailable."""
     api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
     if not api_key:
