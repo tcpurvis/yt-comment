@@ -3,16 +3,65 @@ import json
 import html as html_mod
 from urllib.parse import urlparse, parse_qs
 
+import anthropic
 import streamlit as st
 from googleapiclient.discovery import build
 
-from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES
+from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES, SENTIMENT_COLORS
 from analysis import add_sentiment, cluster_into_themes, get_theme_summary, get_sentiment_counts
 from translate import translate_keywords, add_back_translations
 from report import (
     build_html_report, build_pdf_report,
     _sentiment_badge, _avatar_color, _initials, _format_date,
 )
+
+
+def generate_ai_summary(comments: list[dict], search_query: str) -> str:
+    """Generate an AI summary of themes using Claude."""
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return ""
+
+    themes = get_theme_summary(comments)
+    sentiment_counts = get_sentiment_counts(comments)
+    total = len(comments)
+
+    # Build a concise prompt with theme data and sample comments
+    theme_blocks = []
+    for theme_name, theme_comments in themes.items():
+        t_counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
+        for c in theme_comments:
+            t_counts[c["sentiment_label"]] += 1
+        samples = [c["comment"][:200] for c in theme_comments[:5]]
+        theme_blocks.append(
+            f"Theme: {theme_name} ({len(theme_comments)} comments)\n"
+            f"Sentiment: +{t_counts['Positive']} ~{t_counts['Neutral']} -{t_counts['Negative']}\n"
+            f"Sample comments:\n" + "\n".join(f"- {s}" for s in samples)
+        )
+
+    prompt = (
+        f"Analyze these YouTube comment themes from a search for \"{search_query}\".\n"
+        f"Total: {total} comments | "
+        f"+{sentiment_counts['Positive']} positive, "
+        f"~{sentiment_counts['Neutral']} neutral, "
+        f"-{sentiment_counts['Negative']} negative.\n\n"
+        + "\n\n".join(theme_blocks)
+        + "\n\nWrite a concise summary (3-5 paragraphs) of the key themes and sentiment "
+        "patterns in these comments. What are people talking about? What's the overall "
+        "tone? Are there notable points of agreement or disagreement? "
+        "Be specific and reference the actual topics, not generic observations."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text
+    except Exception as e:
+        return f"*Could not generate AI summary: {e}*"
 
 
 def get_youtube_client(api_key: str):
@@ -470,9 +519,13 @@ def main():
             st.warning("No comments matched your filters.")
             return
 
+        with st.spinner("Generating AI theme summary..."):
+            ai_summary = generate_ai_summary(analyzed, sq)
+
         st.session_state["analyzed_comments"] = analyzed
         st.session_state["hidden_ids"] = set()
         st.session_state["keywords"] = keywords
+        st.session_state["ai_summary"] = ai_summary
         st.success(f"**{len(analyzed):,}** comments match your filters.")
 
     # --- Nothing analyzed yet ---
@@ -482,10 +535,17 @@ def main():
     all_comments = st.session_state["analyzed_comments"]
     hidden_ids = st.session_state.get("hidden_ids", set())
     kws = st.session_state.get("keywords", [])
+    ai_summary = st.session_state.get("ai_summary", "")
 
     # --- Preview ---
     st.divider()
     st.subheader("Report Preview")
+
+    # --- AI Theme Summary ---
+    if ai_summary:
+        with st.expander("**AI Theme Summary**", expanded=True):
+            st.markdown(ai_summary)
+
     st.caption("Un-check any comment to exclude it from the report and PDF.")
 
     # --- Video filter ---
@@ -501,7 +561,6 @@ def main():
     else:
         display_comments = all_comments
 
-    themes = get_theme_summary(display_comments)
     sentiment_counts = get_sentiment_counts(display_comments)
     total = len(display_comments)
 
@@ -511,7 +570,7 @@ def main():
         for label in ["Positive", "Neutral", "Negative"]:
             count = sentiment_counts.get(label, 0)
             pct = count / total * 100
-            color = {"Positive": "#2e7d32", "Negative": "#c62828", "Neutral": "#616161"}[label]
+            color = SENTIMENT_COLORS[label]
             emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
             if pct > 0:
                 _bar_html += (
@@ -526,11 +585,20 @@ def main():
             f'margin:8px 0 16px 0;">{_bar_html}</div>'
         )
 
-    # Render themed comment cards with checkboxes
+    # Group comments by sentiment
+    sentiment_groups = {}
+    for label in ["Positive", "Neutral", "Negative"]:
+        group = [c for c in display_comments if c["sentiment_label"] == label]
+        if group:
+            sentiment_groups[label] = group
+
+    # Render sentiment-grouped comment cards with checkboxes
     visible_comments = []
-    for i, (theme_name, theme_comments) in enumerate(themes.items()):
-        with st.expander(f"**{theme_name}** — {len(theme_comments)} comments", expanded=True):
-            for c in theme_comments:
+    for label, group_comments in sentiment_groups.items():
+        emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
+        color = SENTIMENT_COLORS[label]
+        with st.expander(f"**{emoji} {label}** — {len(group_comments)} comments", expanded=True):
+            for c in group_comments:
                 cid = c["_id"]
 
                 col_cb, col_card, col_sent = st.columns([0.03, 0.82, 0.15], vertical_alignment="top")
@@ -639,7 +707,7 @@ def main():
         return
 
     # --- PDF export ---
-    pdf_bytes = build_pdf_report(visible_comments, sq, kws)
+    pdf_bytes = build_pdf_report(visible_comments, sq, kws, ai_summary=ai_summary)
 
     st.download_button(
         label="Download PDF Report",

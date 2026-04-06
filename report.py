@@ -145,10 +145,10 @@ def _sentiment_bar(counts: dict, total: int) -> str:
 
 
 def build_html_report(
-    comments: list[dict], search_query: str, keywords: list[str]
+    comments: list[dict], search_query: str, keywords: list[str],
+    ai_summary: str = "",
 ) -> str:
-    """Build a complete HTML report with themed sections and styled comments."""
-    themes = get_theme_summary(comments)
+    """Build a complete HTML report grouped by sentiment with AI summary."""
     sentiment_counts = get_sentiment_counts(comments)
     total = len(comments)
     now = datetime.now().strftime("%B %d, %Y at %I:%M %p")
@@ -156,55 +156,64 @@ def build_html_report(
     kw_display = ", ".join(keywords) if keywords else "None"
     multi_video = len(set(c.get("video_title", "") for c in comments)) > 1
 
-    # Theme sections
-    theme_sections = ""
-    for i, (theme_name, theme_comments) in enumerate(themes.items()):
-        color = THEME_PALETTE[i % len(THEME_PALETTE)]
-        cards = "".join(_comment_card(c, show_video_tag=multi_video) for c in theme_comments)
+    # AI summary block
+    summary_section = ""
+    if ai_summary:
+        paragraphs = "".join(
+            f"<p style='margin-bottom:10px;'>{html.escape(p)}</p>"
+            for p in ai_summary.strip().split("\n\n") if p.strip()
+        )
+        summary_section = f"""
+        <div style="background:#f8f9ff;border:1px solid #e0e4f5;border-radius:12px;
+                    padding:20px 24px;margin-bottom:32px;">
+          <h2 style="margin:0 0 12px 0;font-size:16px;color:#4338ca;">
+            🔍 AI Theme Summary
+          </h2>
+          <div style="font-size:14px;color:#1a1a1a;line-height:1.6;">
+            {paragraphs}
+          </div>
+        </div>
+        """
 
-        # Mini sentiment breakdown for this theme
-        t_counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
-        for c in theme_comments:
-            t_counts[c["sentiment_label"]] += 1
-        mini_bar = _sentiment_bar(t_counts, len(theme_comments))
+    # Sentiment sections
+    sentiment_sections = ""
+    for label in ["Positive", "Neutral", "Negative"]:
+        group = [c for c in comments if c["sentiment_label"] == label]
+        if not group:
+            continue
+        emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
+        color = SENTIMENT_COLORS[label]
+        cards = "".join(_comment_card(c, show_video_tag=multi_video) for c in group)
 
-        theme_sections += f"""
+        sentiment_sections += f"""
         <div style="margin-bottom:36px;">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
             <div style="width:6px;height:28px;border-radius:3px;background:{color};"></div>
-            <h2 style="margin:0;font-size:18px;color:#1a1a1a;">{html.escape(theme_name)}</h2>
+            <h2 style="margin:0;font-size:18px;color:#1a1a1a;">{emoji} {label}</h2>
             <span style="background:#f3f4f6;color:#6b7280;font-size:12px;
                          padding:2px 10px;border-radius:10px;font-weight:600;">
-              {len(theme_comments)} comment{"s" if len(theme_comments) != 1 else ""}
+              {len(group)} comment{"s" if len(group) != 1 else ""}
             </span>
           </div>
-          {mini_bar}
           <div style="padding-left:16px;">{cards}</div>
         </div>
         """
+
+    css = (
+        "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');"
+        "* { margin: 0; padding: 0; box-sizing: border-box; }"
+        "body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;"
+        "  background: #ffffff; color: #1a1a1a; padding: 40px; max-width: 900px; margin: 0 auto; }"
+        "@media print { body { padding: 20px; } }"
+    )
 
     return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: #ffffff;
-    color: #1a1a1a;
-    padding: 40px;
-    max-width: 900px;
-    margin: 0 auto;
-  }}
-  @media print {{
-    body {{ padding: 20px; }}
-  }}
-</style>
+<style>{css}</style>
 </head>
 <body>
-  <!-- Header -->
   <div style="text-align:center;margin-bottom:36px;">
     <div style="font-size:40px;margin-bottom:8px;">💬</div>
     <h1 style="font-size:26px;font-weight:700;color:#1a1a1a;margin-bottom:4px;">
@@ -213,7 +222,6 @@ def build_html_report(
     <p style="font-size:14px;color:#6b7280;">Generated {now}</p>
   </div>
 
-  <!-- Summary card -->
   <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:16px;
               padding:24px 28px;color:#fff;margin-bottom:32px;">
     <div style="display:flex;flex-wrap:wrap;gap:24px;justify-content:space-between;">
@@ -234,25 +242,19 @@ def build_html_report(
           Total Comments</div>
         <div style="font-size:18px;font-weight:700;margin-top:4px;">{total}</div>
       </div>
-      <div>
-        <div style="font-size:12px;opacity:0.85;text-transform:uppercase;letter-spacing:1px;">
-          Themes Found</div>
-        <div style="font-size:18px;font-weight:700;margin-top:4px;">{len(themes)}</div>
-      </div>
     </div>
   </div>
 
-  <!-- Overall sentiment -->
+  {summary_section}
+
   <h2 style="font-size:18px;margin-bottom:4px;">Overall Sentiment</h2>
   {_sentiment_bar(sentiment_counts, total)}
 
-  <!-- Themes -->
-  {theme_sections}
+  {sentiment_sections}
 
-  <!-- Footer -->
   <div style="text-align:center;padding:24px 0;border-top:1px solid #e5e7eb;
               margin-top:24px;font-size:12px;color:#9ca3af;">
-    Built with YouTube Comment Scraper &middot; Sentiment by VADER &middot; Themes by TF-IDF + KMeans
+    Built with YouTube Comment Scraper &middot; Sentiment by VADER
   </div>
 </body>
 </html>"""
@@ -287,10 +289,10 @@ class _ReportPDF(FPDF):
 
 
 def build_pdf_report(
-    comments: list[dict], search_query: str, keywords: list[str]
+    comments: list[dict], search_query: str, keywords: list[str],
+    ai_summary: str = "",
 ) -> bytes:
-    """Build a styled PDF report and return the bytes."""
-    themes = get_theme_summary(comments)
+    """Build a styled PDF report grouped by sentiment."""
     sentiment_counts = get_sentiment_counts(comments)
     total = len(comments)
     now = datetime.now().strftime("%B %d, %Y at %I:%M %p")
@@ -330,7 +332,7 @@ def build_pdf_report(
         ("SEARCH QUERY", _safe(search_query[:35])),
         ("KEYWORDS", _safe(kw_display[:35])),
         ("TOTAL COMMENTS", str(total)),
-        ("THEMES FOUND", str(len(themes))),
+        ("SENTIMENT", f"+{sentiment_counts['Positive']} ~{sentiment_counts['Neutral']} -{sentiment_counts['Negative']}"),
     ]
     for j, (lbl, val) in enumerate(summary_items):
         x = 14 + j * col_w
@@ -364,11 +366,29 @@ def build_pdf_report(
     _draw_sentiment_bar(pdf, sentiment_counts, total)
     pdf.ln(8)
 
-    # ---- Theme sections ----
-    for i, (theme_name, theme_comments) in enumerate(themes.items()):
-        color = THEME_PALETTE[i % len(THEME_PALETTE)]
+    # ---- AI Summary ----
+    if ai_summary:
+        if pdf.get_y() > pdf.h - 60:
+            pdf.add_page()
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_text_color(67, 56, 202)
+        pdf.cell(0, 8, "AI Theme Summary", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(26, 26, 26)
+        summary_text = _safe(ai_summary)
+        pdf.multi_cell(pdf.w - 20, 4.5, summary_text, new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(8)
 
-        # Theme heading
+    # ---- Sentiment sections ----
+    for label in ["Positive", "Neutral", "Negative"]:
+        group = [c for c in comments if c["sentiment_label"] == label]
+        if not group:
+            continue
+
+        emoji_text = {"Positive": "(+)", "Negative": "(-)", "Neutral": "(~)"}[label]
+        color = SENTIMENT_COLORS[label]
+
         if pdf.get_y() > pdf.h - 50:
             pdf.add_page()
         r, g, b = _hex_to_rgb(color)
@@ -377,19 +397,11 @@ def build_pdf_report(
         pdf.set_x(16)
         pdf.set_font("Helvetica", "B", 13)
         pdf.set_text_color(26, 26, 26)
-        pdf.cell(0, 8, f"{_safe(theme_name)}  ({len(theme_comments)} comments)",
+        pdf.cell(0, 8, f"{emoji_text} {label}  ({len(group)} comments)",
                  new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(1)
-
-        # Theme sentiment mini-bar
-        t_counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
-        for c in theme_comments:
-            t_counts[c["sentiment_label"]] += 1
-        _draw_sentiment_bar(pdf, t_counts, len(theme_comments))
         pdf.ln(4)
 
-        # Comments
-        for c in theme_comments:
+        for c in group:
             _draw_comment(pdf, c, show_video_tag=multi_video)
 
         pdf.ln(6)
