@@ -581,6 +581,12 @@ def main():
             )
             translated_kw_map[lang_code] = [k.strip() for k in edited.split(",") if k.strip()]
 
+    skip_bt = st.checkbox(
+        "Skip bulk back-translation",
+        help="Skip translating all matched foreign-language comments to English during analysis. "
+             "You can still translate individual comments in the preview.",
+    )
+
     if st.button("Apply Filters & Analyze", type="primary"):
         if not search_all and not keywords:
             st.warning("Enter at least one keyword or check 'Return all comments'.")
@@ -632,7 +638,7 @@ def main():
 
         # Step 2: Back-translate (if needed)
         needs_bt = [m for m in matched if m.get("_needs_bt")]
-        if needs_bt:
+        if needs_bt and not skip_bt:
             status.update(label=f"Step 2/4 — Back-translating {len(needs_bt)} comments...")
             by_lang: dict[str, list[dict]] = {}
             for m in needs_bt:
@@ -640,6 +646,11 @@ def main():
             for lang_code, group in by_lang.items():
                 status.write(f"Translating {len(group)} comments from {lang_code}...")
                 add_back_translations(group, lang_code)
+        elif needs_bt and skip_bt:
+            # Preserve language info for on-demand translation later
+            for m in needs_bt:
+                m["original_language"] = m.pop("_needs_bt")
+            status.write(f"Skipped back-translation for {len(needs_bt)} comments (translate individually in preview).")
         else:
             for m in matched:
                 m.pop("_needs_bt", None)
@@ -769,6 +780,15 @@ def main():
                     if new_sentiment != current:
                         c["sentiment_label"] = new_sentiment
                         c["sentiment_override"] = True
+
+                    # On-demand translate button
+                    if c.get("original_language") and not c.get("back_translation"):
+                        if st.button("🌐 Translate", key=f"bt_{cid}"):
+                            from translate import back_translate
+                            c["back_translation"] = back_translate(
+                                c["comment"], c["original_language"]
+                            )
+                            st.rerun()
 
                 with col_card:
                     avatar_bg = _avatar_color(c["author"])
