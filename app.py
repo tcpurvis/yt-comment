@@ -351,51 +351,82 @@ def main():
     # PHASE 1: FETCH — hits the API, stores raw comments in session state
     # ===================================================================
     if st.button("Fetch Comments", type="primary"):
+        from googleapiclient.errors import HttpError
+
         youtube = get_youtube_client(api_key)
 
-        if input_mode == "Paste video URLs":
-            video_ids = extract_video_ids(url_input)
-            if not video_ids:
-                st.warning("Please paste at least one valid YouTube URL.")
-                return
-            with st.spinner("Looking up videos..."):
-                videos = get_video_info(youtube, video_ids)
-            if not videos:
-                st.error("Could not find any of the provided video IDs.")
-                return
-            sq = ", ".join(v["title"] for v in videos)
-        else:
-            if not search_query:
-                st.warning("Please enter a search query.")
-                return
-            with st.spinner("Searching videos..."):
-                videos = search_videos(youtube, search_query, max_videos)
-            if not videos:
-                st.warning("No videos found.")
-                return
-            sq = search_query
+        try:
+            if input_mode == "Paste video URLs":
+                video_ids = extract_video_ids(url_input)
+                if not video_ids:
+                    st.warning("Please paste at least one valid YouTube URL.")
+                    return
+                with st.spinner("Looking up videos..."):
+                    videos = get_video_info(youtube, video_ids)
+                if not videos:
+                    st.error("Could not find any of the provided video IDs.")
+                    return
+                sq = ", ".join(v["title"] for v in videos)
+            else:
+                if not search_query:
+                    st.warning("Please enter a search query.")
+                    return
+                with st.spinner("Searching videos..."):
+                    videos = search_videos(youtube, search_query, max_videos)
+                if not videos:
+                    st.warning("No videos found.")
+                    return
+                sq = search_query
+        except HttpError as e:
+            reason = e.error_details[0]["reason"] if e.error_details else str(e)
+            if e.resp.status == 403:
+                st.error(
+                    f"**YouTube API error (403):** {reason}\n\n"
+                    "This usually means your daily quota (10,000 units) is exhausted. "
+                    "Quota resets at midnight Pacific Time. You can check usage at "
+                    "[Google Cloud Console](https://console.cloud.google.com/apis/dashboard)."
+                )
+            else:
+                st.error(f"**YouTube API error ({e.resp.status}):** {reason}")
+            return
 
         raw_comments: list[dict] = []
         status = st.status("Fetching comments...", expanded=True)
-        for i, video in enumerate(videos):
-            counter = status.empty()
-            video_label = video["title"][:50]
+        try:
+            for i, video in enumerate(videos):
+                counter = status.empty()
+                video_label = video["title"][:50]
 
-            def update_counter(count, _label=video_label, _el=counter, _prev=raw_comments):
-                total = len(_prev) + count
-                _el.markdown(f"**{_label}** — {count:,} comments fetched ({total:,} total)")
+                def update_counter(count, _label=video_label, _el=counter, _prev=raw_comments):
+                    total = len(_prev) + count
+                    _el.markdown(f"**{_label}** — {count:,} comments fetched ({total:,} total)")
 
-            batch = fetch_comments(
-                youtube, video["video_id"], max_scan, include_replies,
-                on_progress=update_counter,
-            )
-            for c in batch:
-                c["video_title"] = video["title"]
-            raw_comments.extend(batch)
-            counter.markdown(
-                f"**{video_label}** — {len(batch):,} comments ✓ "
-                f"({len(raw_comments):,} total)"
-            )
+                batch = fetch_comments(
+                    youtube, video["video_id"], max_scan, include_replies,
+                    on_progress=update_counter,
+                )
+                for c in batch:
+                    c["video_title"] = video["title"]
+                raw_comments.extend(batch)
+                counter.markdown(
+                    f"**{video_label}** — {len(batch):,} comments ✓ "
+                    f"({len(raw_comments):,} total)"
+                )
+        except HttpError as e:
+            reason = e.error_details[0]["reason"] if e.error_details else str(e)
+            if raw_comments:
+                status.update(
+                    label=f"API error after {len(raw_comments):,} comments — saving what was fetched.",
+                    state="error", expanded=True,
+                )
+                status.write(f"**Error:** {reason}")
+                if e.resp.status == 403:
+                    status.write("Daily quota likely exhausted. Resets at midnight PT.")
+            else:
+                status.update(label="API error", state="error")
+                st.error(f"**YouTube API error ({e.resp.status}):** {reason}")
+                return
+
         status.update(
             label=f"Fetched {len(raw_comments):,} comments from {len(videos)} video(s).",
             state="complete", expanded=False,
