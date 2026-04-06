@@ -201,21 +201,34 @@ def fetch_comments(
     return comments[:max_comments]
 
 
+def _build_keyword_pattern(keywords: list[str]) -> re.Pattern | None:
+    """Build a compiled regex that matches any keyword as a whole word (case-insensitive)."""
+    if not keywords:
+        return None
+    escaped = [re.escape(kw.strip()) for kw in keywords if kw.strip()]
+    if not escaped:
+        return None
+    return re.compile(r"\b(?:" + "|".join(escaped) + r")\b", re.IGNORECASE)
+
+
 def filter_comments(
     comments: list[dict],
     keywords: list[str],
     exclude_keywords: list[str] | None = None,
 ) -> list[dict]:
-    """Keep comments where any keyword appears and no exclude keyword appears (case-insensitive)."""
+    """Keep comments where any keyword appears as a whole word (case-insensitive)."""
     if not keywords:
         return list(comments)
-    exclude_keywords = exclude_keywords or []
+    include_pat = _build_keyword_pattern(keywords)
+    exclude_pat = _build_keyword_pattern(exclude_keywords or [])
+    if not include_pat:
+        return list(comments)
     results = []
     for c in comments:
-        text = c["comment"].lower()
-        if not any(kw.lower() in text for kw in keywords):
+        text = c["comment"]
+        if not include_pat.search(text):
             continue
-        if exclude_keywords and any(ex.lower() in text for ex in exclude_keywords):
+        if exclude_pat and exclude_pat.search(text):
             continue
         results.append(c)
     return results
@@ -522,19 +535,26 @@ def main():
         if search_all:
             matched = [dict(c) for c in raw_comments]
         else:
-            all_kw_sets: list[tuple[list[str], str | None]] = [(keywords, None)]
+            # Build compiled regex patterns for each keyword set
+            all_kw_sets: list[tuple[re.Pattern, str | None]] = []
+            include_en = _build_keyword_pattern(keywords)
+            if include_en:
+                all_kw_sets.append((include_en, None))
             for lang_code, kws in translated_kw_map.items():
-                if kws:
-                    all_kw_sets.append((kws, lang_code))
+                pat = _build_keyword_pattern(kws)
+                if pat:
+                    all_kw_sets.append((pat, lang_code))
+
+            exclude_pat = _build_keyword_pattern(exclude_keywords)
 
             seen: set[int] = set()
             matched: list[dict] = []
             for idx, c in enumerate(raw_comments):
-                for plan_kws, plan_lang in all_kw_sets:
-                    text = c["comment"].lower()
-                    if not any(kw.lower() in text for kw in plan_kws):
+                for include_pat, plan_lang in all_kw_sets:
+                    text = c["comment"]
+                    if not include_pat.search(text):
                         continue
-                    if exclude_keywords and any(ex.lower() in text for ex in exclude_keywords):
+                    if exclude_pat and exclude_pat.search(text):
                         continue
                     if idx in seen:
                         continue
