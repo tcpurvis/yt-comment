@@ -318,11 +318,34 @@ def main():
     )
 
     if input_mode == "Upload previous export":
-        uploaded = st.file_uploader(
-            "Upload a comments JSON export",
-            type=["json"],
-            help="Load a previously exported comments file to re-analyze without fetching from YouTube.",
-        )
+        upload_col, export_col = st.columns(2)
+        with upload_col:
+            uploaded = st.file_uploader(
+                "Upload a comments JSON export",
+                type=["json"],
+                help="Load a previously exported comments file to re-analyze without fetching from YouTube.",
+            )
+        with export_col:
+            if "raw_comments" in st.session_state:
+                from datetime import datetime as _dt
+                _exp_ts = _dt.now().strftime("%Y-%m-%d_%H%M%S")
+                _raw = st.session_state["raw_comments"]
+                _sq = st.session_state.get("search_query", "export")
+                _vtitles = sorted(set(c.get("video_title", "") for c in _raw if c.get("video_title")))
+                _tslug = re.sub(r"[^\w\s-]", "", _vtitles[0] if len(_vtitles) == 1 else "multiple_videos")
+                _tslug = re.sub(r"\s+", "_", _tslug.strip())[:50]
+                _exp_data = json.dumps({"search_query": _sq, "comments": _raw}, ensure_ascii=False).encode("utf-8")
+                st.download_button(
+                    label="Export Raw Comments (JSON)",
+                    data=_exp_data,
+                    file_name=f"{_tslug}_{_exp_ts}.json",
+                    mime="application/json",
+                )
+            else:
+                st.caption("No comments loaded yet.")
+
+        st.caption("Download comments as JSON to avoid another API pull when revisiting this analysis later.")
+
         if uploaded is not None:
             upload_id = f"{uploaded.name}_{uploaded.size}"
             if st.session_state.get("_last_upload_id") != upload_id:
@@ -555,7 +578,6 @@ def main():
     raw_comments = st.session_state["raw_comments"]
     sq = st.session_state["search_query"]
 
-    # --- Download raw export ---
     _rainbow_bar = (
         '<div style="display:flex;width:100%;height:3px;overflow:hidden;">'
         '<div style="flex:1;background:#00BCE7;"></div>'
@@ -574,12 +596,6 @@ def main():
     _video_titles = sorted(set(c.get("video_title", "") for c in raw_comments if c.get("video_title")))
     _title_slug = re.sub(r"[^\w\s-]", "", _video_titles[0] if len(_video_titles) == 1 else "multiple_videos")
     _title_slug = re.sub(r"\s+", "_", _title_slug.strip())[:50]
-    _export_filename = f"{_title_slug}_{_export_ts}.json"
-
-    export_data = json.dumps(
-        {"search_query": sq, "comments": raw_comments},
-        ensure_ascii=False,
-    ).encode("utf-8")
 
     # --- Fetch stats breakdown ---
     total_raw = len(raw_comments)
@@ -606,23 +622,14 @@ def main():
 
     _analysis_done = "analyzed_comments" in st.session_state
     _analyze_expander = st.expander(
-        "**Filter & Analyze**",
+        "**Run Initial Comment Analysis**",
         expanded=not _analysis_done,
     )
     with _analyze_expander:
-        col_info, col_dl = st.columns([0.7, 0.3])
-        with col_info:
-            st.caption(
-                f"**{total_raw:,}** cached comments available. "
-                "Change filters and re-analyze without re-fetching."
-            )
-        with col_dl:
-            st.download_button(
-                label="Export Raw Comments (JSON)",
-                data=export_data,
-                file_name=_export_filename,
-                mime="application/json",
-            )
+        st.caption(
+            f"**{total_raw:,}** cached comments available. "
+            "Change filters and re-analyze without re-fetching."
+        )
 
     with _analyze_expander:
         search_all = st.checkbox(
@@ -733,7 +740,7 @@ def main():
                 translated_kw_map[lang_code] = [k.strip() for k in edited.split(",") if k.strip()]
 
     with _analyze_expander:
-        _do_analyze = st.button("Apply Filters & Analyze", type="primary")
+        _do_analyze = st.button("Run Analysis", type="primary")
 
     if _do_analyze:
         if not search_all and not keywords:
