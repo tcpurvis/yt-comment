@@ -144,7 +144,6 @@ def main():
 
     # --- Sidebar ---
     st.sidebar.header("Settings")
-    max_videos = st.sidebar.slider("Max videos to search", 1, 50, 10)
     max_scan = st.sidebar.number_input(
         "Comments to scan per video", min_value=100, max_value=250_000,
         value=5000, step=1000,
@@ -184,6 +183,7 @@ def main():
             "Search YouTube for videos",
             placeholder="e.g. python tutorial",
         )
+        max_videos = st.slider("Max videos to search", 1, 50, 10)
 
     keyword_input = st.text_input(
         "Filter comments by keywords (comma-separated)",
