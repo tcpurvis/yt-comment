@@ -1070,6 +1070,8 @@ def main():
             with st.spinner("Generating AI theme summary from selected comments..."):
                 ai_summary = generate_ai_summary(visible_comments, sq)
                 st.session_state["ai_summary"] = ai_summary
+                st.session_state["ai_summary_edit"] = ai_summary
+                st.session_state["_ai_summary_source"] = "generate"
                 st.session_state["_ai_summary_ids"] = {c["_id"] for c in visible_comments}
 
         # Check if summary is stale (comments changed since generation)
@@ -1081,13 +1083,18 @@ def main():
                 summary_stale = True
 
             with st.expander("**AI Theme Summary**", expanded=True):
+                # Sync edit key with ai_summary
+                if "ai_summary_edit" not in st.session_state:
+                    st.session_state["ai_summary_edit"] = ai_summary
+                elif st.session_state["ai_summary_edit"] != ai_summary and \
+                     st.session_state.get("_ai_summary_source") == "generate":
+                    # AI summary was just regenerated, update edit field
+                    st.session_state["ai_summary_edit"] = ai_summary
+
                 preview_tab, edit_tab = st.tabs(["Preview", "Edit"])
-                with preview_tab:
-                    st.markdown(ai_summary)
                 with edit_tab:
                     edited_summary = st.text_area(
-                        "Edit summary (supports markdown: **bold**, *italic*, <u>underline</u>)",
-                        value=ai_summary,
+                        "Edit summary (supports **bold**, *italic*, <u>underline</u>)",
                         height=200,
                         key="ai_summary_edit",
                         label_visibility="collapsed",
@@ -1095,6 +1102,8 @@ def main():
                     if edited_summary != ai_summary:
                         st.session_state["ai_summary"] = edited_summary
                         ai_summary = edited_summary
+                with preview_tab:
+                    st.markdown(ai_summary, unsafe_allow_html=True)
 
                 if summary_stale:
                     st.warning("Comments have changed since this summary was generated. "
