@@ -332,14 +332,13 @@ def build_pdf_report(
     pdf.set_fill_color(r, g, b)
     box_y = pdf.get_y()
     usable = pdf.w - 20
-    col_w = usable / 3
+    col_w = usable / 2
     box_h = 32
     pdf.rect(10, box_y, usable, box_h, "F")
 
     summary_items = [
         ("KEYWORDS", _safe(kw_display[:50])),
         ("TOTAL COMMENTS", str(total)),
-        ("SENTIMENT", f"+{sentiment_counts['Positive']} ~{sentiment_counts['Neutral']} -{sentiment_counts['Negative']}"),
     ]
     for j, (lbl, val) in enumerate(summary_items):
         x = 14 + j * col_w

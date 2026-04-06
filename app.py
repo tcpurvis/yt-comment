@@ -1009,6 +1009,42 @@ def main():
             f'margin:8px 0 16px 0;">{_bar_html}</div>'
         )
 
+    # Compute visible comments (excluding hidden) for AI summary + export
+    visible_comments = [c for c in display_comments if c["_id"] not in hidden_ids]
+
+    # --- AI Summary + Export (right under sentiment bar) ---
+    if visible_comments:
+        ai_summary = st.session_state.get("ai_summary", "")
+
+        col_ai, col_pdf = st.columns([0.5, 0.5])
+        with col_ai:
+            if st.button("Generate AI Summary", type="secondary", key="gen_ai_summary"):
+                with st.spinner("Generating AI theme summary from selected comments..."):
+                    ai_summary = generate_ai_summary(visible_comments, sq)
+                    st.session_state["ai_summary"] = ai_summary
+        with col_pdf:
+            _preset = st.session_state.get("keyword_preset", "Custom")
+            pdf_bytes = build_pdf_report(
+                visible_comments, sq, kws,
+                ai_summary=ai_summary,
+                preset_name=_preset,
+            )
+            st.download_button(
+                label="Download PDF Report",
+                data=pdf_bytes,
+                file_name=f"{_title_slug}_{_export_ts}_report.pdf",
+                mime="application/pdf",
+                type="primary",
+            )
+
+        if ai_summary:
+            with st.expander("**AI Theme Summary**", expanded=True):
+                st.markdown(ai_summary)
+
+    hidden_count = len(display_comments) - len(visible_comments)
+    if hidden_count:
+        st.info(f"Hiding **{hidden_count}** comment(s). Report will include **{len(visible_comments)}**.")
+
     # Group comments by sentiment (preserving sort within each group)
     sentiment_groups = {}
     for label in ["Positive", "Neutral", "Negative"]:
@@ -1019,7 +1055,6 @@ def main():
     st.caption(f"Showing **{total:,}** comments")
 
     # Render sentiment-grouped comment cards with checkboxes
-    visible_comments = []
     for label, group_comments in sentiment_groups.items():
         emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
         color = SENTIMENT_COLORS[label]
@@ -1037,7 +1072,6 @@ def main():
                     )
                 if kept:
                     hidden_ids.discard(cid)
-                    visible_comments.append(c)
                 else:
                     hidden_ids.add(cid)
 
@@ -1142,43 +1176,6 @@ def main():
                     """)
 
     st.session_state["hidden_ids"] = hidden_ids
-
-    hidden_count = len(all_comments) - len(visible_comments)
-    if hidden_count:
-        st.info(f"Hiding **{hidden_count}** comment(s). Report will include **{len(visible_comments)}**.")
-
-    if not visible_comments:
-        st.warning("All comments are hidden. Check at least one to generate a report.")
-        return
-
-    # --- AI Summary (runs on reviewed/visible comments) ---
-    st.divider()
-    ai_summary = st.session_state.get("ai_summary", "")
-
-    if st.button("Generate AI Summary", type="secondary"):
-        with st.spinner("Generating AI theme summary from selected comments..."):
-            ai_summary = generate_ai_summary(visible_comments, sq)
-            st.session_state["ai_summary"] = ai_summary
-
-    if ai_summary:
-        with st.expander("**AI Theme Summary**", expanded=True):
-            st.markdown(ai_summary)
-
-    # --- PDF export ---
-    _preset = st.session_state.get("keyword_preset", "Custom")
-    pdf_bytes = build_pdf_report(
-        visible_comments, sq, kws,
-        ai_summary=ai_summary,
-        preset_name=_preset,
-    )
-
-    st.download_button(
-        label="Download PDF Report",
-        data=pdf_bytes,
-        file_name=f"{_title_slug}_{_export_ts}_report.pdf",
-        mime="application/pdf",
-        type="primary",
-    )
 
 
 if __name__ == "__main__":
