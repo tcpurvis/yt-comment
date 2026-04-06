@@ -288,15 +288,19 @@ def main():
         help="Load a previously exported comments file to re-analyze without fetching from YouTube.",
     )
     if uploaded is not None:
-        try:
-            data = json.loads(uploaded.read())
-            st.session_state["raw_comments"] = data["comments"]
-            st.session_state["search_query"] = data.get("search_query", "Imported")
-            st.session_state.pop("analyzed_comments", None)
-            st.session_state.pop("hidden_ids", None)
-            st.sidebar.success(f"Loaded **{len(data['comments']):,}** comments.")
-        except Exception as e:
-            st.sidebar.error(f"Failed to load file: {e}")
+        # Only process the upload once (not on every rerun)
+        upload_id = f"{uploaded.name}_{uploaded.size}"
+        if st.session_state.get("_last_upload_id") != upload_id:
+            try:
+                data = json.loads(uploaded.read())
+                st.session_state["raw_comments"] = data["comments"]
+                st.session_state["search_query"] = data.get("search_query", "Imported")
+                st.session_state.pop("analyzed_comments", None)
+                st.session_state.pop("hidden_ids", None)
+                st.session_state["_last_upload_id"] = upload_id
+                st.sidebar.success(f"Loaded **{len(data['comments']):,}** comments.")
+            except Exception as e:
+                st.sidebar.error(f"Failed to load file: {e}")
 
     # --- Main inputs: video source ---
     input_mode = st.radio(
@@ -498,6 +502,7 @@ def main():
         "Return all comments (skip keyword filter)",
         help="Include every comment without keyword filtering. "
              "Useful when you want to analyze all discussion on specific videos.",
+        key="search_all",
     )
 
     if not search_all:
@@ -507,6 +512,7 @@ def main():
             "Keyword preset",
             options=preset_names,
             help="Load a pre-built keyword set or use your own custom keywords.",
+            key="keyword_preset",
         )
 
         if selected_preset != "Custom":
@@ -517,10 +523,14 @@ def main():
             default_kw = ""
             preset_translations = {}
 
+        # Only set default value if no existing value in session state
+        if "keyword_input" not in st.session_state and default_kw:
+            st.session_state["keyword_input"] = default_kw
+
         keyword_input = st.text_input(
             "Filter comments by keywords (comma-separated)",
-            value=default_kw,
             placeholder="e.g. great, awesome, helpful",
+            key="keyword_input",
         )
         keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
 
@@ -528,12 +538,14 @@ def main():
             "Exclude comments containing (comma-separated)",
             placeholder="e.g. spam, subscribe, giveaway",
             help="Comments matching any of these words will be excluded.",
+            key="exclude_input",
         )
         exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
     else:
         keywords = []
         exclude_keywords = []
         preset_translations = {}
+        selected_preset = "Custom"
 
     st.sidebar.header("Multi-Language Search")
     selected_langs = st.sidebar.multiselect(
@@ -585,6 +597,7 @@ def main():
         "Skip bulk back-translation",
         help="Skip translating all matched foreign-language comments to English during analysis. "
              "You can still translate individual comments in the preview.",
+        key="skip_bt",
     )
 
     if st.button("Apply Filters & Analyze", type="primary"):
