@@ -325,37 +325,32 @@ def build_pdf_report(
     pdf.set_text_color(107, 114, 128)
     pdf.cell(0, 6, f"YouTube Comment Analysis  |  Generated {now}", align="C",
              new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(8)
+    pdf.ln(4)
 
-    # ---- Summary box (single tone) ----
-    r, g, b = _hex_to_rgb("#00BCE7")
-    pdf.set_fill_color(r, g, b)
-    box_y = pdf.get_y()
-    usable = pdf.w - 20
-    col_w = usable / 2
-    box_h = 32
-    pdf.rect(10, box_y, usable, box_h, "F")
+    # ---- Divider line 1 (under title) ----
+    pdf.set_draw_color(200, 200, 200)
+    pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
+    pdf.ln(6)
 
-    summary_items = [
-        ("KEYWORDS", _safe(kw_display[:50])),
-        ("TOTAL COMMENTS", str(total)),
-    ]
-    for j, (lbl, val) in enumerate(summary_items):
-        x = 14 + j * col_w
-        pdf.set_xy(x, box_y + 5)
-        pdf.set_font("Lato", "", 7)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(col_w - 4, 4, lbl, new_x="LMARGIN")
-        pdf.set_xy(x, box_y + 12)
-        pdf.set_font("Lato", "B", 11)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(col_w - 4, 8, val, new_x="LMARGIN")
-
-    pdf.set_y(box_y + box_h + 8)
-
-    # ---- Overall sentiment section ----
+    # ---- Summary info (plain text) ----
+    pdf.set_font("Lato", "", 8)
+    pdf.set_text_color(107, 114, 128)
+    pdf.cell(0, 5, "KEYWORDS", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Lato", "B", 11)
     pdf.set_text_color(26, 26, 26)
+    pdf.multi_cell(pdf.w - 20, 6, _safe(kw_display), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    pdf.set_font("Lato", "", 8)
+    pdf.set_text_color(107, 114, 128)
+    pdf.cell(30, 5, "TOTAL COMMENTS", new_x="END")
+    pdf.set_font("Lato", "B", 11)
+    pdf.set_text_color(26, 26, 26)
+    pdf.cell(0, 5, f"  {total}", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(6)
+
+    # ---- Overall sentiment ----
     pdf.set_font("Lato", "B", 13)
+    pdf.set_text_color(26, 26, 26)
     pdf.cell(0, 8, "Overall Sentiment", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
     _draw_sentiment_bar(pdf, sentiment_counts, total)
@@ -373,21 +368,25 @@ def build_pdf_report(
             pdf.set_x(x0)
             pdf.cell(seg_w, 5, lbl, align="C", new_x="END")
         x0 += seg_w
-    pdf.ln(10)
+    pdf.ln(6)
 
     # ---- AI Summary ----
     if ai_summary:
-        if pdf.get_y() > pdf.h - 60:
-            pdf.add_page()
+        pdf.ln(2)
         pdf.set_font("Lato", "B", 13)
-        pdf.set_text_color(0, 188, 231)
+        pdf.set_text_color(26, 26, 26)
         pdf.cell(0, 8, "AI Theme Summary", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
         pdf.set_font("Lato", "", 9)
         pdf.set_text_color(26, 26, 26)
         summary_text = _safe(ai_summary)
         pdf.multi_cell(pdf.w - 20, 4.5, summary_text, new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(8)
+        pdf.ln(4)
+
+    # ---- Divider line 2 (under overview section) ----
+    pdf.set_draw_color(200, 200, 200)
+    pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
+    pdf.ln(8)
 
     # ---- Sentiment sections ----
     for label in ["Positive", "Neutral", "Negative"]:
