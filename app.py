@@ -437,11 +437,35 @@ def main():
         ensure_ascii=False,
     ).encode("utf-8")
 
+    # --- Fetch stats breakdown ---
+    total_raw = len(raw_comments)
+    top_level = [c for c in raw_comments if not c.get("is_reply")]
+    replies_list = [c for c in raw_comments if c.get("is_reply")]
+
+    with st.expander(f"**Fetch Stats** — {total_raw:,} total comments", expanded=False):
+        stat_col1, stat_col2, stat_col3 = st.columns(3)
+        stat_col1.metric("Total Comments", f"{total_raw:,}")
+        stat_col2.metric("Top-Level", f"{len(top_level):,}")
+        stat_col3.metric("Replies", f"{len(replies_list):,}")
+
+        # Per-video breakdown
+        video_titles = sorted(set(c.get("video_title", "") for c in raw_comments))
+        if len(video_titles) > 1 or video_titles:
+            st.markdown("**By video:**")
+            for vt in video_titles:
+                v_comments = [c for c in raw_comments if c.get("video_title") == vt]
+                v_top = sum(1 for c in v_comments if not c.get("is_reply"))
+                v_replies = sum(1 for c in v_comments if c.get("is_reply"))
+                st.markdown(
+                    f"- **{vt}** — {len(v_comments):,} total "
+                    f"({v_top:,} top-level, {v_replies:,} replies)"
+                )
+
     col_info, col_dl = st.columns([0.7, 0.3])
     with col_info:
         st.subheader("Filter & Analyze")
         st.caption(
-            f"**{len(raw_comments):,}** cached comments available. "
+            f"**{total_raw:,}** cached comments available. "
             "Change filters and re-analyze without re-fetching."
         )
     with col_dl:
