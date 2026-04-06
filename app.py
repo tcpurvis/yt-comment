@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 
 from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES, SENTIMENT_COLORS, KEYWORD_PRESETS
 from analysis import add_sentiment, cluster_into_themes, get_theme_summary, get_sentiment_counts
-from translate import translate_keywords, add_back_translations
+from translate import translate_keywords, add_back_translations, back_translate, detect_language
 from report import (
     build_html_report, build_pdf_report,
     _sentiment_badge, _avatar_color, _initials, _format_date,
@@ -759,9 +759,11 @@ def main():
                         continue
                     seen.add(idx)
                     copy = dict(c)
-                    copy["matched_language"] = plan_lang or "en"
-                    if plan_lang:
-                        copy["_needs_bt"] = plan_lang
+                    # Detect actual language instead of using keyword set
+                    detected = detect_language(c["comment"])
+                    copy["matched_language"] = detected
+                    if detected != "en":
+                        copy["_needs_bt"] = detected
                     matched.append(copy)
                     break
 
@@ -1038,13 +1040,12 @@ def main():
                         c["sentiment_label"] = new_sentiment
                         c["sentiment_override"] = True
 
-                    # On-demand translate button
-                    if c.get("original_language") and not c.get("back_translation"):
+                    # On-demand translate button for non-English comments
+                    lang_code = c.get("matched_language", "en")
+                    has_translation = c.get("back_translation") and c["back_translation"] != c["comment"]
+                    if lang_code != "en" and not has_translation:
                         if st.button("🌐 Translate", key=f"bt_{cid}"):
-                            from translate import back_translate
-                            c["back_translation"] = back_translate(
-                                c["comment"], c["original_language"]
-                            )
+                            c["back_translation"] = back_translate(c["comment"])
                             st.rerun()
 
                 with col_card:
