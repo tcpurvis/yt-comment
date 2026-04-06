@@ -80,8 +80,42 @@ def get_video_info(youtube, video_ids: list[str]) -> list[dict]:
     return videos
 
 
-def fetch_comments(youtube, video_id: str, max_comments: int = 100) -> list[dict]:
-    """Fetch top-level comments for a video."""
+def fetch_replies(youtube, parent_id: str) -> list[dict]:
+    """Fetch all replies for a top-level comment."""
+    replies = []
+    request = youtube.comments().list(
+        part="snippet",
+        parentId=parent_id,
+        maxResults=100,
+        textFormat="plainText",
+    )
+    while request:
+        try:
+            response = request.execute()
+        except Exception:
+            break
+        for item in response["items"]:
+            s = item["snippet"]
+            replies.append(
+                {
+                    "author": s["authorDisplayName"],
+                    "comment": s["textDisplay"],
+                    "likes": s["likeCount"],
+                    "replies": 0,
+                    "date": s["publishedAt"],
+                    "video_id": s["videoId"],
+                    "is_reply": True,
+                    "parent_id": parent_id,
+                }
+            )
+        request = youtube.comments().list_next(request, response)
+    return replies
+
+
+def fetch_comments(
+    youtube, video_id: str, max_comments: int = 100, include_replies: bool = False
+) -> list[dict]:
+    """Fetch top-level comments (and optionally replies) for a video."""
     comments = []
     request = youtube.commentThreads().list(
         part="snippet",
@@ -96,16 +130,23 @@ def fetch_comments(youtube, video_id: str, max_comments: int = 100) -> list[dict
             break
         for item in response["items"]:
             snippet = item["snippet"]["topLevelComment"]["snippet"]
+            thread_id = item["snippet"]["topLevelComment"]["id"]
+            reply_count = item["snippet"]["totalReplyCount"]
             comments.append(
                 {
                     "author": snippet["authorDisplayName"],
                     "comment": snippet["textDisplay"],
                     "likes": snippet["likeCount"],
-                    "replies": item["snippet"]["totalReplyCount"],
+                    "replies": reply_count,
                     "date": snippet["publishedAt"],
                     "video_id": video_id,
+                    "is_reply": False,
+                    "comment_id": thread_id,
                 }
             )
+            if include_replies and reply_count > 0:
+                replies = fetch_replies(youtube, thread_id)
+                comments.extend(replies)
         request = youtube.commentThreads().list_next(request, response)
     return comments[:max_comments]
 
@@ -220,6 +261,11 @@ def main():
         help="How deep to search into each video's comments for keyword matches. "
              "Set high for viral videos with 200k+ comments.",
     )
+    include_replies = st.sidebar.checkbox(
+        "Include replies",
+        help="Fetch replies under each top-level comment. Uses 1 additional API call "
+             "per top-level comment that has replies.",
+    )
 
     # --- Load previous export ---
     st.sidebar.header("Load Previous Export")
@@ -313,7 +359,7 @@ def main():
         raw_comments: list[dict] = []
         progress = st.progress(0, text="Fetching comments...")
         for i, video in enumerate(videos):
-            batch = fetch_comments(youtube, video["video_id"], max_scan)
+            batch = fetch_comments(youtube, video["video_id"], max_scan, include_replies)
             for c in batch:
                 c["video_title"] = video["title"]
             raw_comments.extend(batch)
@@ -487,7 +533,7 @@ def main():
             for c in theme_comments:
                 cid = c["_id"]
 
-                col_cb, col_card = st.columns([0.05, 0.95], vertical_alignment="top")
+                col_cb, col_card, col_sent = st.columns([0.03, 0.82, 0.15], vertical_alignment="top")
                 with col_cb:
                     kept = st.checkbox(
                         "include",
@@ -501,12 +547,34 @@ def main():
                 else:
                     hidden_ids.add(cid)
 
+                with col_sent:
+                    sentiment_options = ["Positive", "Neutral", "Negative"]
+                    current = c["sentiment_label"]
+                    new_sentiment = st.selectbox(
+                        "Sentiment",
+                        options=sentiment_options,
+                        index=sentiment_options.index(current),
+                        key=f"sent_{cid}",
+                        label_visibility="collapsed",
+                    )
+                    if new_sentiment != current:
+                        c["sentiment_label"] = new_sentiment
+                        c["sentiment_override"] = True
+
                 with col_card:
                     avatar_bg = _avatar_color(c["author"])
                     initials = _initials(c["author"])
                     date_str = _format_date(c["date"])
                     sentiment = _sentiment_badge(c["sentiment_label"])
                     opacity = "1" if kept else "0.35"
+
+                    reply_marker = ""
+                    if c.get("is_reply"):
+                        reply_marker = (
+                            '<span style="display:inline-block;padding:1px 6px;border-radius:4px;'
+                            'font-size:10px;font-weight:500;color:#6366f1;background:#eef2ff;'
+                            'margin-right:6px;">↩ reply</span>'
+                        )
 
                     likes_html = ""
                     if c.get("likes", 0) > 0:
@@ -547,6 +615,7 @@ def main():
                       <div style="flex:1;min-width:0;">
                         {video_tag_html}
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                          {reply_marker}
                           <span style="font-weight:600;font-size:13px;color:#030303;">{author_text}</span>
                           <span style="font-size:12px;color:#909090;">{date_str}</span>
                           {sentiment}
