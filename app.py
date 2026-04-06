@@ -163,17 +163,25 @@ def fetch_replies(youtube, parent_id: str, video_id: str) -> list[dict]:
 
 
 def fetch_comments(
-    youtube, video_id: str, max_comments: int = 100, include_replies: bool = False
+    youtube, video_id: str, max_comments: int | None = None,
+    include_replies: bool = False, on_progress=None,
 ) -> list[dict]:
-    """Fetch top-level comments (and optionally replies) for a video."""
+    """Fetch top-level comments (and optionally replies) for a video.
+
+    max_comments: cap on comments to fetch, or None for all.
+    on_progress: optional callback(count) called after each page.
+    """
     comments = []
+    page_size = MAX_RESULTS_PER_PAGE if max_comments is None else min(max_comments, MAX_RESULTS_PER_PAGE)
     request = youtube.commentThreads().list(
         part="snippet",
         videoId=video_id,
-        maxResults=min(max_comments, MAX_RESULTS_PER_PAGE),
+        maxResults=page_size,
         textFormat="plainText",
     )
-    while request and len(comments) < max_comments:
+    while request:
+        if max_comments is not None and len(comments) >= max_comments:
+            break
         try:
             response = request.execute()
         except Exception:
@@ -197,8 +205,12 @@ def fetch_comments(
             if include_replies and reply_count > 0:
                 replies = fetch_replies(youtube, thread_id, video_id)
                 comments.extend(replies)
+        if on_progress:
+            on_progress(len(comments))
         request = youtube.commentThreads().list_next(request, response)
-    return comments[:max_comments]
+    if max_comments is not None:
+        return comments[:max_comments]
+    return comments
 
 
 def _build_keyword_pattern(keywords: list[str]) -> re.Pattern | None:
@@ -249,12 +261,18 @@ def main():
 
     # --- Sidebar: Fetch settings ---
     st.sidebar.header("Fetch Settings")
-    max_scan = st.sidebar.number_input(
-        "Comments to scan per video", min_value=100, max_value=250_000,
-        value=5000, step=1000,
-        help="How deep to search into each video's comments for keyword matches. "
-             "Set high for viral videos with 200k+ comments.",
+    fetch_all = st.sidebar.checkbox(
+        "Fetch all comments",
+        value=True,
+        help="Fetch every comment on each video. Uncheck to set a limit.",
     )
+    if fetch_all:
+        max_scan = None
+    else:
+        max_scan = st.sidebar.number_input(
+            "Comments to scan per video", min_value=100, max_value=250_000,
+            value=5000, step=1000,
+        )
     include_replies = st.sidebar.checkbox(
         "Include replies",
         help="Fetch replies under each top-level comment. Uses 1 additional API call "
@@ -307,20 +325,27 @@ def main():
         _est_videos = max_videos
         _search_cost = ((_est_videos + 49) // 50) * 100
 
-    _pages_per_video = (max_scan + 99) // 100
-    _comment_cost = _est_videos * _pages_per_video
-    _total_est = _search_cost + _comment_cost
-
-    _pct = min(_total_est / 10_000 * 100, 100)
-    _color = "🟢" if _pct < 25 else "🟡" if _pct < 60 else "🔴"
     st.sidebar.divider()
-    st.sidebar.markdown(
-        f"### API Quota Estimate\n"
-        f"{_color} **~{_total_est:,} units** of 10,000 daily quota ({_pct:.0f}%)\n\n"
-        f"<small>{_est_videos} video(s) &times; {_pages_per_video:,} pages/video"
-        f"{f' + {_search_cost} search' if _search_cost else ''}</small>",
-        unsafe_allow_html=True,
-    )
+    if fetch_all:
+        st.sidebar.markdown(
+            "### API Quota Estimate\n"
+            "⚠️ **Unknown** — fetching all comments. Quota usage depends on "
+            "video size. Each page of 50 comments = 1 unit.",
+        )
+    else:
+        _pages_per_video = (max_scan + 99) // 100
+        _comment_cost = _est_videos * _pages_per_video
+        _total_est = _search_cost + _comment_cost
+
+        _pct = min(_total_est / 10_000 * 100, 100)
+        _color = "🟢" if _pct < 25 else "🟡" if _pct < 60 else "🔴"
+        st.sidebar.markdown(
+            f"### API Quota Estimate\n"
+            f"{_color} **~{_total_est:,} units** of 10,000 daily quota ({_pct:.0f}%)\n\n"
+            f"<small>{_est_videos} video(s) &times; {_pages_per_video:,} pages/video"
+            f"{f' + {_search_cost} search' if _search_cost else ''}</small>",
+            unsafe_allow_html=True,
+        )
 
     # ===================================================================
     # PHASE 1: FETCH — hits the API, stores raw comments in session state
@@ -351,14 +376,30 @@ def main():
             sq = search_query
 
         raw_comments: list[dict] = []
-        progress = st.progress(0, text="Fetching comments...")
+        status = st.status("Fetching comments...", expanded=True)
         for i, video in enumerate(videos):
-            batch = fetch_comments(youtube, video["video_id"], max_scan, include_replies)
+            counter = status.empty()
+            video_label = video["title"][:50]
+
+            def update_counter(count, _label=video_label, _el=counter, _prev=raw_comments):
+                total = len(_prev) + count
+                _el.markdown(f"**{_label}** — {count:,} comments fetched ({total:,} total)")
+
+            batch = fetch_comments(
+                youtube, video["video_id"], max_scan, include_replies,
+                on_progress=update_counter,
+            )
             for c in batch:
                 c["video_title"] = video["title"]
             raw_comments.extend(batch)
-            progress.progress((i + 1) / len(videos))
-        progress.empty()
+            counter.markdown(
+                f"**{video_label}** — {len(batch):,} comments ✓ "
+                f"({len(raw_comments):,} total)"
+            )
+        status.update(
+            label=f"Fetched {len(raw_comments):,} comments from {len(videos)} video(s).",
+            state="complete", expanded=False,
+        )
 
         # Store raw (unfiltered) comments
         st.session_state["raw_comments"] = raw_comments
