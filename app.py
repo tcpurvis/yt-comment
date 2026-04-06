@@ -1005,6 +1005,22 @@ def main():
             f'margin:8px 0 16px 0;">{_bar_html}</div>'
         )
 
+    # Language breakdown
+    _lang_code_to_name = {v: k for k, v in SUPPORTED_LANGUAGES.items()}
+    _lang_code_to_name["en"] = "English"
+    _lang_code_to_name["all"] = "All (unfiltered)"
+
+    lang_counts: dict[str, int] = {}
+    for c in display_comments:
+        lc = c.get("matched_language", "en")
+        name = _lang_code_to_name.get(lc, lc)
+        lang_counts[name] = lang_counts.get(name, 0) + 1
+
+    if len(lang_counts) > 1 or (len(lang_counts) == 1 and "English" not in lang_counts):
+        lang_parts = [f"{name}: {count:,}" for name, count in
+                      sorted(lang_counts.items(), key=lambda x: -x[1])]
+        st.caption(f"**Languages detected:** {' · '.join(lang_parts)}")
+
     # Compute visible comments (excluding hidden) for AI summary + export
     visible_comments = [c for c in display_comments if c["_id"] not in hidden_ids]
 

@@ -402,7 +402,29 @@ def build_pdf_report(
             pdf.set_x(x0)
             pdf.cell(seg_w, 5, lbl, align="C", new_x="END")
         x0 += seg_w
-    pdf.ln(6)
+    pdf.ln(8)
+
+    # ---- Languages detected ----
+    from config import SUPPORTED_LANGUAGES as _SUPPORTED_LANGUAGES
+    _lc_to_name = {v: k for k, v in _SUPPORTED_LANGUAGES.items()}
+    _lc_to_name["en"] = "English"
+    _lc_to_name["all"] = "All (unfiltered)"
+    _lang_counts: dict[str, int] = {}
+    for c in comments:
+        lc = c.get("matched_language", "en")
+        name = _lc_to_name.get(lc, lc)
+        _lang_counts[name] = _lang_counts.get(name, 0) + 1
+
+    if len(_lang_counts) > 1 or (len(_lang_counts) == 1 and "English" not in _lang_counts):
+        pdf.set_font("Lato", "B", 10)
+        pdf.set_text_color(26, 26, 26)
+        pdf.cell(0, 6, "Languages Detected", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Lato", "", 9)
+        pdf.set_text_color(80, 80, 80)
+        lang_parts = [f"{name}: {count:,}" for name, count in
+                      sorted(_lang_counts.items(), key=lambda x: -x[1])]
+        pdf.cell(0, 5, "  ".join(lang_parts), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(4)
 
     # ---- AI Summary ----
     if ai_summary:
