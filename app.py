@@ -7,7 +7,7 @@ import anthropic
 import streamlit as st
 from googleapiclient.discovery import build
 
-from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES, SENTIMENT_COLORS
+from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES, SENTIMENT_COLORS, KEYWORD_PRESETS
 from analysis import add_sentiment, cluster_into_themes, get_theme_summary, get_sentiment_counts
 from translate import translate_keywords, add_back_translations
 from report import (
@@ -486,8 +486,25 @@ def main():
     )
 
     if not search_all:
+        # Preset selector
+        preset_names = ["Custom"] + list(KEYWORD_PRESETS.keys())
+        selected_preset = st.selectbox(
+            "Keyword preset",
+            options=preset_names,
+            help="Load a pre-built keyword set or use your own custom keywords.",
+        )
+
+        if selected_preset != "Custom":
+            preset = KEYWORD_PRESETS[selected_preset]
+            default_kw = ", ".join(preset["keywords"])
+            preset_translations = preset.get("translations", {})
+        else:
+            default_kw = ""
+            preset_translations = {}
+
         keyword_input = st.text_input(
             "Filter comments by keywords (comma-separated)",
+            value=default_kw,
             placeholder="e.g. great, awesome, helpful",
         )
         keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
@@ -501,6 +518,7 @@ def main():
     else:
         keywords = []
         exclude_keywords = []
+        preset_translations = {}
 
     # --- Sidebar: analysis settings (only shown after fetch) ---
     st.sidebar.header("Analysis Settings")
@@ -529,17 +547,26 @@ def main():
     # --- Translated keywords preview + edit ---
     translated_kw_map: dict[str, list[str]] = {}
     if selected_langs and keywords and not search_all:
-        # Auto-translate on first run or when keywords/languages change
-        cache_key = f"{','.join(keywords)}|{','.join(selected_langs)}"
+        # Use preset translations if available, otherwise auto-translate
+        cache_key = f"{','.join(keywords)}|{','.join(selected_langs)}|{selected_preset if not search_all else ''}"
         if st.session_state.get("_translation_cache_key") != cache_key:
-            with st.spinner("Translating keywords..."):
-                new_map = {}
-                for lang_name in selected_langs:
-                    lang_code = SUPPORTED_LANGUAGES[lang_name]
-                    translated = translate_keywords(keywords, lang_code)
-                    new_map[lang_code] = translated
-                st.session_state["_translated_kw_map"] = new_map
-                st.session_state["_translation_cache_key"] = cache_key
+            new_map = {}
+            needs_translation = []
+            for lang_name in selected_langs:
+                lang_code = SUPPORTED_LANGUAGES[lang_name]
+                if lang_code in preset_translations and preset_translations[lang_code]:
+                    new_map[lang_code] = preset_translations[lang_code]
+                else:
+                    needs_translation.append((lang_name, lang_code))
+
+            if needs_translation:
+                with st.spinner("Translating keywords..."):
+                    for lang_name, lang_code in needs_translation:
+                        translated = translate_keywords(keywords, lang_code)
+                        new_map[lang_code] = translated
+
+            st.session_state["_translated_kw_map"] = new_map
+            st.session_state["_translation_cache_key"] = cache_key
 
         stored_map = st.session_state.get("_translated_kw_map", {})
 
