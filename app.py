@@ -130,8 +130,27 @@ def get_video_info(youtube, video_ids: list[str]) -> list[dict]:
     return videos
 
 
+import time
+
+
+def _api_call_with_retry(request, max_retries: int = 3):
+    """Execute an API request with exponential backoff retries."""
+    for attempt in range(max_retries + 1):
+        try:
+            return request.execute()
+        except Exception as e:
+            if attempt == max_retries:
+                raise
+            err_str = str(e)
+            # Retry on transient errors only
+            if any(x in err_str for x in ["500", "503", "429", "timed out", "Connection"]):
+                time.sleep(2 ** attempt)
+                continue
+            raise
+
+
 def fetch_replies(youtube, parent_id: str, video_id: str) -> list[dict]:
-    """Fetch all replies for a top-level comment."""
+    """Fetch all replies for a top-level comment with retries."""
     replies = []
     request = youtube.comments().list(
         part="snippet",
@@ -141,10 +160,10 @@ def fetch_replies(youtube, parent_id: str, video_id: str) -> list[dict]:
     )
     while request:
         try:
-            response = request.execute()
+            response = _api_call_with_retry(request)
         except Exception:
             break
-        for item in response["items"]:
+        for item in response.get("items", []):
             s = item["snippet"]
             replies.append(
                 {
@@ -164,51 +183,63 @@ def fetch_replies(youtube, parent_id: str, video_id: str) -> list[dict]:
 
 def fetch_comments(
     youtube, video_id: str, max_comments: int | None = None,
-    include_replies: bool = False, on_progress=None,
+    on_progress=None,
 ) -> list[dict]:
-    """Fetch top-level comments (and optionally replies) for a video.
+    """Fetch top-level comments for a video with retries.
 
-    max_comments: cap on comments to fetch, or None for all.
-    on_progress: optional callback(count) called after each page.
+    Fetches using both 'time' and 'relevance' ordering and deduplicates
+    to maximize coverage on large videos where a single pass may miss
+    comments due to YouTube API pagination limits.
     """
-    comments = []
+    seen_ids: set[str] = set()
+    comments: list[dict] = []
     page_size = MAX_RESULTS_PER_PAGE if max_comments is None else min(max_comments, MAX_RESULTS_PER_PAGE)
-    request = youtube.commentThreads().list(
-        part="snippet",
-        videoId=video_id,
-        maxResults=page_size,
-        textFormat="plainText",
-        order="time",
-    )
-    while request:
-        if max_comments is not None and len(comments) >= max_comments:
-            break
-        try:
-            response = request.execute()
-        except Exception:
-            break
-        for item in response["items"]:
-            snippet = item["snippet"]["topLevelComment"]["snippet"]
-            thread_id = item["snippet"]["topLevelComment"]["id"]
-            reply_count = item["snippet"]["totalReplyCount"]
-            comments.append(
-                {
-                    "author": snippet["authorDisplayName"],
-                    "comment": snippet["textDisplay"],
-                    "likes": snippet["likeCount"],
-                    "replies": reply_count,
-                    "date": snippet["publishedAt"],
-                    "video_id": video_id,
-                    "is_reply": False,
-                    "comment_id": thread_id,
-                }
-            )
-            if include_replies and reply_count > 0:
-                replies = fetch_replies(youtube, thread_id, video_id)
-                comments.extend(replies)
-        if on_progress:
-            on_progress(len(comments))
-        request = youtube.commentThreads().list_next(request, response)
+
+    for sort_order in ["time", "relevance"]:
+        request = youtube.commentThreads().list(
+            part="snippet",
+            videoId=video_id,
+            maxResults=page_size,
+            textFormat="plainText",
+            order=sort_order,
+        )
+        consecutive_failures = 0
+        while request:
+            if max_comments is not None and len(comments) >= max_comments:
+                break
+            try:
+                response = _api_call_with_retry(request)
+                consecutive_failures = 0
+            except Exception:
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    break
+                continue
+
+            for item in response.get("items", []):
+                thread_id = item["snippet"]["topLevelComment"]["id"]
+                if thread_id in seen_ids:
+                    continue
+                seen_ids.add(thread_id)
+
+                snippet = item["snippet"]["topLevelComment"]["snippet"]
+                reply_count = item["snippet"]["totalReplyCount"]
+                comments.append(
+                    {
+                        "author": snippet["authorDisplayName"],
+                        "comment": snippet["textDisplay"],
+                        "likes": snippet["likeCount"],
+                        "replies": reply_count,
+                        "date": snippet["publishedAt"],
+                        "video_id": video_id,
+                        "is_reply": False,
+                        "comment_id": thread_id,
+                    }
+                )
+            if on_progress:
+                on_progress(len(comments))
+            request = youtube.commentThreads().list_next(request, response)
+
     if max_comments is not None:
         return comments[:max_comments]
     return comments
@@ -398,25 +429,50 @@ def main():
         raw_comments: list[dict] = []
         status = st.status("Fetching comments...", expanded=True)
         try:
+            # Pass 1: Fetch top-level comments
             for i, video in enumerate(videos):
                 counter = status.empty()
                 video_label = video["title"][:50]
 
                 def update_counter(count, _label=video_label, _el=counter, _prev=raw_comments):
                     total = len(_prev) + count
-                    _el.markdown(f"**{_label}** — {count:,} comments fetched ({total:,} total)")
+                    _el.markdown(f"**{_label}** — {count:,} top-level comments ({total:,} total)")
 
                 batch = fetch_comments(
-                    youtube, video["video_id"], max_scan, include_replies,
+                    youtube, video["video_id"], max_scan,
                     on_progress=update_counter,
                 )
                 for c in batch:
                     c["video_title"] = video["title"]
                 raw_comments.extend(batch)
                 counter.markdown(
-                    f"**{video_label}** — {len(batch):,} comments ✓ "
+                    f"**{video_label}** — {len(batch):,} top-level ✓ "
                     f"({len(raw_comments):,} total)"
                 )
+
+            # Pass 2: Fetch replies (separate pass so failures don't break main fetch)
+            if include_replies:
+                comments_with_replies = [c for c in raw_comments if c.get("replies", 0) > 0]
+                if comments_with_replies:
+                    reply_counter = status.empty()
+                    total_replies = 0
+                    failed_replies = 0
+                    for j, c in enumerate(comments_with_replies):
+                        try:
+                            replies = fetch_replies(youtube, c["comment_id"], c["video_id"])
+                            for r in replies:
+                                r["video_title"] = c.get("video_title", "")
+                            raw_comments.extend(replies)
+                            total_replies += len(replies)
+                        except Exception:
+                            failed_replies += 1
+                        if (j + 1) % 10 == 0 or j == len(comments_with_replies) - 1:
+                            reply_counter.markdown(
+                                f"Replies: {total_replies:,} fetched from "
+                                f"{j + 1:,}/{len(comments_with_replies):,} threads"
+                                f"{f' ({failed_replies} failed)' if failed_replies else ''}"
+                            )
+
         except HttpError as e:
             reason = e.error_details[0]["reason"] if e.error_details else str(e)
             if raw_comments:
