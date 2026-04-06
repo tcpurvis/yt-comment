@@ -291,28 +291,50 @@ def build_pdf_report(
     pdf.set_fill_color(r, g, b)
     pdf.set_text_color(255, 255, 255)
     box_y = pdf.get_y()
-    pdf.rect(10, box_y, pdf.w - 20, 28, "F")
+    usable = pdf.w - 20
+    col_w = usable / 4
+    box_h = 32
+    pdf.rect(10, box_y, usable, box_h, "F")
 
-    pdf.set_xy(14, box_y + 3)
-    pdf.set_font("Helvetica", "", 7)
-    pdf.cell(42, 4, "SEARCH QUERY", new_x="END")
-    pdf.cell(42, 4, "KEYWORDS", new_x="END")
-    pdf.cell(42, 4, "TOTAL COMMENTS", new_x="END")
-    pdf.cell(42, 4, "THEMES FOUND", new_x="LMARGIN", new_y="NEXT")
+    # Also draw a subtle gradient overlay (lighter right half)
+    r2, g2, b2 = _hex_to_rgb("#8b5cf6")
+    pdf.set_fill_color(r2, g2, b2)
+    pdf.rect(10 + usable / 2, box_y, usable / 2, box_h, "F")
 
-    pdf.set_x(14)
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(42, 8, _safe(search_query[:30]), new_x="END")
-    pdf.cell(42, 8, _safe(kw_display[:30]), new_x="END")
-    pdf.cell(42, 8, str(total), new_x="END")
-    pdf.cell(42, 8, str(len(themes)), new_x="LMARGIN", new_y="NEXT")
+    summary_items = [
+        ("SEARCH QUERY", _safe(search_query[:35])),
+        ("KEYWORDS", _safe(kw_display[:35])),
+        ("TOTAL COMMENTS", str(total)),
+        ("THEMES FOUND", str(len(themes))),
+    ]
+    for j, (lbl, val) in enumerate(summary_items):
+        x = 14 + j * col_w
+        pdf.set_xy(x, box_y + 5)
+        pdf.set_font("Helvetica", "", 7)
+        pdf.set_text_color(220, 220, 255)
+        pdf.cell(col_w - 4, 4, lbl, new_x="LMARGIN")
+        pdf.set_xy(x, box_y + 12)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(col_w - 4, 8, val, new_x="LMARGIN")
 
-    pdf.ln(10)
+    pdf.set_y(box_y + box_h + 8)
 
-    # ---- Overall sentiment bar ----
+    # ---- Overall sentiment section ----
     pdf.set_text_color(26, 26, 26)
     pdf.set_font("Helvetica", "B", 13)
     pdf.cell(0, 8, "Overall Sentiment", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    # Emoji-style summary counts above the bar
+    pdf.set_font("Helvetica", "", 9)
+    for lbl, icon in [("Positive", "(+)"), ("Neutral", "(~)"), ("Negative", "(-)")]:
+        count = sentiment_counts.get(lbl, 0)
+        pct = f"{count / total * 100:.0f}%" if total else "0%"
+        sr, sg, sb = _hex_to_rgb(SENTIMENT_COLORS[lbl])
+        pdf.set_text_color(sr, sg, sb)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 5, f"  {icon} {lbl}: {count} ({pct})", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
     _draw_sentiment_bar(pdf, sentiment_counts, total)
     pdf.ln(8)
@@ -395,16 +417,18 @@ def _draw_comment(pdf: FPDF, c: dict):
     avatar_color = _avatar_color(c["author"])
     r, g, b = _hex_to_rgb(avatar_color)
     pdf.set_fill_color(r, g, b)
-    cx, cy = x_start + 4, y_start + 4
-    pdf.ellipse(cx - 4, cy - 4, 8, 8, "F")
+    avatar_size = 10
+    cx, cy = x_start + avatar_size / 2, y_start + avatar_size / 2
+    pdf.ellipse(cx - avatar_size / 2, cy - avatar_size / 2, avatar_size, avatar_size, "F")
     initials = _initials(c["author"])
-    pdf.set_xy(cx - 4, cy - 2.5)
-    pdf.set_font("Helvetica", "B", 6)
+    pdf.set_xy(cx - avatar_size / 2, cy - 2.5)
+    pdf.set_font("Helvetica", "B", 7)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(8, 5, _safe(initials), align="C")
+    pdf.cell(avatar_size, 5, _safe(initials), align="C")
 
     # Author + date + sentiment
-    pdf.set_xy(x_start + 11, y_start)
+    content_x = x_start + avatar_size + 4
+    pdf.set_xy(content_x, y_start)
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_text_color(3, 3, 3)
     pdf.cell(0, 5, _safe(c["author"]), new_x="END")
@@ -414,28 +438,36 @@ def _draw_comment(pdf: FPDF, c: dict):
     date_str = _format_date(c["date"])
     pdf.cell(0, 5, f"   {date_str}", new_x="END")
 
-    # Sentiment badge
+    # Sentiment badge — colored rounded rect
     label = c["sentiment_label"]
-    badge_text = {"Positive": "(+) Positive", "Negative": "(-) Negative", "Neutral": "(~) Neutral"}[label]
+    badge_icon = {"Positive": "+", "Negative": "-", "Neutral": "~"}[label]
     sr, sg, sb = _hex_to_rgb(SENTIMENT_COLORS[label])
-    pdf.set_text_color(sr, sg, sb)
+    badge_x = pdf.get_x()
+    badge_y = pdf.get_y()
+    badge_text = f" {badge_icon} {label} "
     pdf.set_font("Helvetica", "B", 7)
-    pdf.cell(0, 5, f"   {badge_text}", new_x="LMARGIN", new_y="NEXT")
+    badge_w = pdf.get_string_width(badge_text) + 4
+    pdf.set_fill_color(sr, sg, sb)
+    pdf.rect(badge_x + 3, badge_y + 0.5, badge_w, 4, "F")
+    pdf.set_xy(badge_x + 3, badge_y)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(badge_w, 5, badge_text, new_x="LMARGIN", new_y="NEXT")
 
     # Comment text
-    pdf.set_x(x_start + 11)
+    pdf.set_x(content_x)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(3, 3, 3)
     comment_text = _safe(c["comment"])
-    pdf.multi_cell(pdf.w - x_start - 22, 4.5, comment_text, new_x="LMARGIN", new_y="NEXT")
+    text_w = pdf.w - content_x - 10
+    pdf.multi_cell(text_w, 4.5, comment_text, new_x="LMARGIN", new_y="NEXT")
 
     # Back-translation
     if c.get("back_translation") and c.get("original_language"):
-        pdf.set_x(x_start + 11)
+        pdf.set_x(content_x)
         pdf.set_font("Helvetica", "I", 8)
         pdf.set_text_color(99, 102, 241)
         bt = _safe(c["back_translation"])
-        pdf.multi_cell(pdf.w - x_start - 22, 4, f"EN: {bt}", new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(text_w, 4, f"EN: {bt}", new_x="LMARGIN", new_y="NEXT")
 
     # Likes / replies
     meta_parts = []
@@ -444,13 +476,13 @@ def _draw_comment(pdf: FPDF, c: dict):
     if c.get("replies", 0) > 0:
         meta_parts.append(f"Replies: {c['replies']}")
     if meta_parts:
-        pdf.set_x(x_start + 11)
+        pdf.set_x(content_x)
         pdf.set_font("Helvetica", "", 7)
         pdf.set_text_color(96, 96, 96)
         pdf.cell(0, 4, "  |  ".join(meta_parts), new_x="LMARGIN", new_y="NEXT")
 
     # Separator line
-    pdf.ln(2)
-    pdf.set_draw_color(240, 240, 240)
-    pdf.line(x_start + 11, pdf.get_y(), pdf.w - 10, pdf.get_y())
     pdf.ln(3)
+    pdf.set_draw_color(230, 230, 230)
+    pdf.line(content_x, pdf.get_y(), pdf.w - 10, pdf.get_y())
+    pdf.ln(4)

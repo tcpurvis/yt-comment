@@ -363,56 +363,106 @@ def main():
     st.caption("Un-check any comment to exclude it from the report and PDF.")
 
     from analysis import get_theme_summary, get_sentiment_counts
+    from report import _sentiment_badge, _avatar_color, _initials, _format_date
 
     themes = get_theme_summary(all_comments)
     sentiment_counts = get_sentiment_counts(all_comments)
     total = len(all_comments)
 
-    # Overall sentiment bar
-    cols = st.columns(3)
-    for col, label in zip(cols, ["Positive", "Neutral", "Negative"]):
+    # Overall sentiment summary
+    _bar_html = ""
+    for label in ["Positive", "Neutral", "Negative"]:
         count = sentiment_counts.get(label, 0)
-        pct = f"{count / total * 100:.0f}%" if total else "0%"
+        pct = count / total * 100 if total else 0
+        color = {"Positive": "#2e7d32", "Negative": "#c62828", "Neutral": "#616161"}[label]
         emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
-        col.metric(f"{emoji} {label}", f"{count} ({pct})")
+        if pct > 0:
+            _bar_html += (
+                f'<div style="flex:{pct};background:{color};height:32px;'
+                f'display:flex;align-items:center;justify-content:center;'
+                f'color:#fff;font-size:12px;font-weight:600;'
+                f'min-width:{40 if pct > 3 else 0}px;">'
+                f'{emoji} {count} ({pct:.0f}%)</div>'
+            )
+    st.html(
+        f'<div style="display:flex;border-radius:12px;overflow:hidden;'
+        f'margin:8px 0 16px 0;">{_bar_html}</div>'
+    )
 
-    st.write("")
-
-    # Render each theme with its comments and inline checkboxes
+    # Render each theme with styled comment cards + checkboxes
     visible_comments = []
-    for theme_name, theme_comments in themes.items():
+    for i, (theme_name, theme_comments) in enumerate(themes.items()):
+        palette = ["#6366f1", "#ec4899", "#f59e0b", "#10b981",
+                    "#3b82f6", "#ef4444", "#8b5cf6", "#14b8a6"]
+        t_color = palette[i % len(palette)]
+
         with st.expander(f"**{theme_name}** — {len(theme_comments)} comments", expanded=True):
             for c in theme_comments:
                 cid = c["_id"]
-                kept = st.checkbox(
-                    f"**{c['author']}** · {c['date'][:10]}",
-                    value=(cid not in hidden_ids),
-                    key=f"cb_{cid}",
-                )
+
+                # Checkbox + styled card side by side
+                col_cb, col_card = st.columns([0.05, 0.95], vertical_alignment="top")
+                with col_cb:
+                    kept = st.checkbox(
+                        "include",
+                        value=(cid not in hidden_ids),
+                        key=f"cb_{cid}",
+                        label_visibility="collapsed",
+                    )
                 if kept:
                     hidden_ids.discard(cid)
                     visible_comments.append(c)
                 else:
                     hidden_ids.add(cid)
-                    continue
 
-                # Render the comment content inline
-                sentiment_color = {"Positive": "green", "Negative": "red", "Neutral": "gray"}
-                badge = f":{sentiment_color[c['sentiment_label']]}[{c['sentiment_label']}]"
-                st.markdown(f"{badge}")
-                st.write(c["comment"])
+                with col_card:
+                    avatar_bg = _avatar_color(c["author"])
+                    initials = _initials(c["author"])
+                    date_str = _format_date(c["date"])
+                    sentiment = _sentiment_badge(c["sentiment_label"])
+                    opacity = "1" if kept else "0.35"
 
-                if c.get("back_translation") and c.get("original_language"):
-                    st.info(f"🌐 **English:** {c['back_translation']}")
+                    likes_html = ""
+                    if c.get("likes", 0) > 0:
+                        likes_html = f'<span style="color:#606060;font-size:12px;margin-right:10px;">👍 {c["likes"]}</span>'
+                    replies_html = ""
+                    if c.get("replies", 0) > 0:
+                        replies_html = f'<span style="color:#606060;font-size:12px;">💬 {c["replies"]}</span>'
 
-                meta = []
-                if c.get("likes", 0) > 0:
-                    meta.append(f"👍 {c['likes']}")
-                if c.get("replies", 0) > 0:
-                    meta.append(f"💬 {c['replies']}")
-                if meta:
-                    st.caption("  ".join(meta))
-                st.divider()
+                    translation_html = ""
+                    if c.get("back_translation") and c.get("original_language"):
+                        import html as html_mod
+                        bt = html_mod.escape(c["back_translation"])
+                        translation_html = (
+                            f'<div style="margin-top:8px;padding:8px 12px;background:#f0f4ff;'
+                            f'border-left:3px solid #6366f1;border-radius:4px;font-size:13px;'
+                            f'color:#4a5568;font-style:italic;">🌐 English: {bt}</div>'
+                        )
+
+                    import html as html_mod
+                    comment_text = html_mod.escape(c["comment"])
+                    author_text = html_mod.escape(c["author"])
+
+                    st.html(f"""
+                    <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f0f0f0;opacity:{opacity};">
+                      <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;
+                                  background:{avatar_bg};display:flex;align-items:center;
+                                  justify-content:center;color:#fff;font-weight:700;font-size:14px;">
+                        {initials}
+                      </div>
+                      <div style="flex:1;min-width:0;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                          <span style="font-weight:600;font-size:13px;color:#030303;">{author_text}</span>
+                          <span style="font-size:12px;color:#909090;">{date_str}</span>
+                          {sentiment}
+                        </div>
+                        <div style="margin-top:6px;font-size:14px;color:#030303;line-height:1.5;
+                                    word-wrap:break-word;">{comment_text}</div>
+                        {translation_html}
+                        <div style="margin-top:6px;">{likes_html}{replies_html}</div>
+                      </div>
+                    </div>
+                    """)
 
     st.session_state["hidden_ids"] = hidden_ids
 
