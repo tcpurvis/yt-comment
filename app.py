@@ -630,9 +630,10 @@ def main():
             default_kw = ""
             preset_translations = {}
 
-        # Only set default value if no existing value in session state
-        if "keyword_input" not in st.session_state and default_kw:
+        # Update keyword input when preset changes
+        if st.session_state.get("_last_preset") != selected_preset:
             st.session_state["keyword_input"] = default_kw
+            st.session_state["_last_preset"] = selected_preset
 
         keyword_input = st.text_input(
             "Filter comments by keywords (comma-separated)",
