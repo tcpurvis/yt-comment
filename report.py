@@ -585,26 +585,8 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
         pdf.set_text_color(74, 85, 104)
         tag_text = f"  {_safe(c['video_title'][:60])}  "
         tag_w = pdf.get_string_width(tag_text) + 4
-        pdf.cell(tag_w, 5, tag_text, fill=True, new_x="END")
-
-    # Language tag
-    lang_code = c.get("matched_language", "en")
-    if lang_code not in ("en", "all"):
-        from config import LANGUAGE_NAMES as _LN
-        lang_label = _LN.get(lang_code, lang_code)
-        pdf.set_font("Lato", "", 7)
-        pdf.set_fill_color(224, 247, 252)
-        pdf.set_text_color(0, 188, 231)
-        lt = f"  {_safe(lang_label)}  "
-        lt_w = pdf.get_string_width(lt) + 4
-        if show_video_tag and c.get("video_title"):
-            pdf.cell(2, 5, "")  # spacer
-        else:
-            pdf.set_x(14)
-        pdf.cell(lt_w, 5, lt, fill=True, new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(tag_w, 5, tag_text, fill=True, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
-    elif show_video_tag and c.get("video_title"):
-        pdf.ln(7)
 
     x_start = 14
     y_start = pdf.get_y()
@@ -655,8 +637,26 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     pdf.set_fill_color(sr, sg, sb)
     pdf.rect(badge_x + 3, badge_y + 0.5, badge_w, 4, "F")
     pdf.set_xy(badge_x + 3, badge_y)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(badge_w, 5, badge_text, new_x="LMARGIN", new_y="NEXT")
+    if label == "Positive":
+        pdf.set_text_color(26, 26, 26)
+    else:
+        pdf.set_text_color(255, 255, 255)
+    pdf.cell(badge_w, 5, badge_text, new_x="END")
+
+    # Language tag (next to sentiment badge)
+    lang_code = c.get("matched_language", "en")
+    if lang_code not in ("en", "all"):
+        from config import LANGUAGE_NAMES as _LN
+        lang_label = _LN.get(lang_code, lang_code)
+        pdf.set_font("Lato", "", 7)
+        pdf.set_fill_color(224, 247, 252)
+        pdf.set_text_color(0, 188, 231)
+        lt = f"  {_safe(lang_label)}  "
+        lt_w = pdf.get_string_width(lt) + 4
+        pdf.cell(2, 5, "")  # spacer
+        pdf.cell(lt_w, 5, lt, fill=True, new_x="LMARGIN", new_y="NEXT")
+    else:
+        pdf.ln(5)
 
     # Comment text
     pdf.set_x(content_x)

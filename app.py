@@ -1437,35 +1437,32 @@ def main():
 
     st.caption(f"Showing **{total:,}** comments")
 
-    # Bulk actions
-    with st.expander("**Bulk Actions**", expanded=False):
-        bulk_col1, bulk_col2 = st.columns([0.5, 0.5])
-        with bulk_col1:
-            bulk_target = st.selectbox(
-                "Change sentiment to",
-                options=["Positive", "Neutral", "Negative"],
-                key="bulk_sentiment_target",
-            )
-        with bulk_col2:
-            if st.button("Apply to selected comments", key="bulk_sentiment_apply", type="primary"):
-                _selected_ids = st.session_state.get("_bulk_selected", set())
-                changed = 0
-                for c in display_comments:
-                    if c["_id"] in _selected_ids and c["sentiment_label"] != bulk_target:
-                        c["sentiment_label"] = bulk_target
-                        c["sentiment_override"] = True
-                        changed += 1
-                if changed:
-                    st.session_state["_bulk_selected"] = set()
-                    st.success(f"Changed **{changed:,}** comments to **{bulk_target}**.")
-                    st.rerun()
-                else:
-                    st.info("No comments selected or no changes needed. Use checkboxes below to select comments.")
-
     # Initialize bulk selection set
     if "_bulk_selected" not in st.session_state:
         st.session_state["_bulk_selected"] = set()
     bulk_selected = st.session_state["_bulk_selected"]
+
+    # Bulk actions in sidebar
+    st.sidebar.header("Bulk Actions")
+    st.sidebar.caption(f"**{len(bulk_selected)}** comments selected")
+    bulk_target = st.sidebar.selectbox(
+        "Change sentiment to",
+        options=["Positive", "Neutral", "Negative"],
+        key="bulk_sentiment_target",
+    )
+    if st.sidebar.button("Apply to selected", key="bulk_sentiment_apply", type="primary"):
+        changed = 0
+        for c in display_comments:
+            if c["_id"] in bulk_selected and c["sentiment_label"] != bulk_target:
+                c["sentiment_label"] = bulk_target
+                c["sentiment_override"] = True
+                changed += 1
+        if changed:
+            st.session_state["_bulk_selected"] = set()
+            st.rerun()
+    if st.sidebar.button("Unselect all", key="bulk_unselect"):
+        st.session_state["_bulk_selected"] = set()
+        st.rerun()
 
     # Render sentiment-grouped comment cards
     for label, group_comments in sentiment_groups.items():
@@ -1476,8 +1473,8 @@ def main():
                 cid = c["_id"]
                 is_skipped = cid in hidden_ids
 
-                # Two columns: select checkbox + comment card
-                col_sel, col_card = st.columns([0.04, 0.96], vertical_alignment="top")
+                # Three columns: select checkbox + comment card + actions
+                col_sel, col_card, col_act = st.columns([0.03, 0.87, 0.10], vertical_alignment="top")
 
                 with col_sel:
                     selected = st.checkbox(
@@ -1569,23 +1566,20 @@ def main():
                     </div>
                     """)
 
-                    # Inline controls row
-                    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([0.2, 0.2, 0.6])
-                    with ctrl_col1:
-                        if not is_skipped:
-                            if st.button("Skip", key=f"skip_{cid}"):
-                                hidden_ids.add(cid)
-                                st.rerun()
-                        else:
-                            if st.button("Include", key=f"unskip_{cid}"):
-                                hidden_ids.discard(cid)
-                                st.rerun()
-                    with ctrl_col2:
-                        has_translation = c.get("back_translation") and c["back_translation"] != c["comment"]
-                        if lang_code != "en" and lang_code != "all" and not has_translation:
-                            if st.button("Translate", key=f"bt_{cid}"):
-                                c["back_translation"] = back_translate(c["comment"])
-                                st.rerun()
+                with col_act:
+                    if not is_skipped:
+                        if st.button("Skip", key=f"skip_{cid}"):
+                            hidden_ids.add(cid)
+                            st.rerun()
+                    else:
+                        if st.button("Include", key=f"unskip_{cid}"):
+                            hidden_ids.discard(cid)
+                            st.rerun()
+                    has_translation = c.get("back_translation") and c["back_translation"] != c["comment"]
+                    if lang_code != "en" and lang_code != "all" and not has_translation:
+                        if st.button("Translate", key=f"bt_{cid}"):
+                            c["back_translation"] = back_translate(c["comment"])
+                            st.rerun()
 
     st.session_state["hidden_ids"] = hidden_ids
     st.session_state["_bulk_selected"] = bulk_selected
