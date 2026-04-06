@@ -150,11 +150,19 @@ def main():
         help="How deep to search into each video's comments for keyword matches. "
              "Set high for viral videos with 200k+ comments.",
     )
-    max_matches = st.sidebar.number_input(
-        "Max matched comments to return", min_value=10, max_value=10_000,
-        value=200, step=50,
-        help="Stop collecting once this many keyword-matched comments are found across all videos.",
+    no_match_limit = st.sidebar.checkbox(
+        "Return all matched comments (no limit)",
+        help="When checked, every keyword match is kept. "
+             "This can be slow and use more memory for very large result sets.",
     )
+    if no_match_limit:
+        max_matches = float("inf")
+    else:
+        max_matches = st.sidebar.number_input(
+            "Max matched comments to return", min_value=10, max_value=10_000,
+            value=200, step=50,
+            help="Stop collecting once this many keyword-matched comments are found across all videos.",
+        )
     max_themes = st.sidebar.slider("Max themes", 2, 12, 6)
 
     st.sidebar.header("Multi-Language Search")
