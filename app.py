@@ -1085,20 +1085,6 @@ def main():
                 with preview_tab:
                     st.markdown(ai_summary)
                 with edit_tab:
-                    fmt_col1, fmt_col2, fmt_col3, _ = st.columns([0.08, 0.08, 0.08, 0.76])
-                    with fmt_col1:
-                        if st.button("**B**", key="fmt_bold", help="Bold: **text**"):
-                            current = st.session_state.get("ai_summary_edit", ai_summary)
-                            st.session_state["ai_summary_edit"] = current + "**bold text**"
-                    with fmt_col2:
-                        if st.button("*I*", key="fmt_italic", help="Italic: *text*"):
-                            current = st.session_state.get("ai_summary_edit", ai_summary)
-                            st.session_state["ai_summary_edit"] = current + "*italic text*"
-                    with fmt_col3:
-                        if st.button("U̲", key="fmt_underline", help="Underline: <u>text</u>"):
-                            current = st.session_state.get("ai_summary_edit", ai_summary)
-                            st.session_state["ai_summary_edit"] = current + "<u>underlined text</u>"
-
                     edited_summary = st.text_area(
                         "Edit summary (supports markdown: **bold**, *italic*, <u>underline</u>)",
                         value=ai_summary,
