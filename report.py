@@ -20,7 +20,7 @@ def _avatar_color(name: str) -> str:
 
 
 def _sentiment_badge(label: str) -> str:
-    color = SENTIMENT_COLORS.get(label, "#A78BFA")
+    color = SENTIMENT_COLORS.get(label, "#C94EFF")
     emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}.get(label, "")
     text_color = "#1a1a1a" if label == "Positive" else "#fff"
     return (
@@ -83,7 +83,7 @@ def _comment_card(c: dict, show_video_tag: bool = False) -> str:
     if c.get("is_reply"):
         reply_marker = (
             '<span style="display:inline-block;padding:1px 6px;border-radius:4px;'
-            'font-size:10px;font-weight:500;color:#5BC8F0;background:#e6f8fc;'
+            'font-size:10px;font-weight:500;color:#00BCE7;background:#e0f7fc;'
             'margin-right:4px;">↩ reply</span>'
         )
 
@@ -92,7 +92,7 @@ def _comment_card(c: dict, show_video_tag: bool = False) -> str:
         bt = html.escape(c["back_translation"])
         translation_block = (
             f'<div style="margin-top:8px;padding:8px 12px;background:#f0f4ff;'
-            f'border-left:3px solid #5BC8F0;border-radius:4px;font-size:13px;'
+            f'border-left:3px solid #00BCE7;border-radius:4px;font-size:13px;'
             f'color:#4a5568;font-style:italic;">'
             f'🌐 English: {bt}</div>'
         )
@@ -162,9 +162,9 @@ def build_html_report(
             for p in ai_summary.strip().split("\n\n") if p.strip()
         )
         summary_section = f"""
-        <div style="background:#f0fbfd;border:1px solid #c5edf5;border-radius:12px;
+        <div style="background:#e0f7fc;border:1px solid #b3e8f5;border-radius:12px;
                     padding:20px 24px;margin-bottom:32px;">
-          <h2 style="margin:0 0 12px 0;font-size:16px;color:#5BC8F0;">
+          <h2 style="margin:0 0 12px 0;font-size:16px;color:#00BCE7;">
             🔍 AI Theme Summary
           </h2>
           <div style="font-size:14px;color:#1a1a1a;line-height:1.6;">
@@ -219,7 +219,7 @@ def build_html_report(
     <p style="font-size:14px;color:#6b7280;">Generated {now}</p>
   </div>
 
-  <div style="background:linear-gradient(135deg,#5BC8F0,#A78BFA);border-radius:16px;
+  <div style="background:linear-gradient(135deg,#00BCE7,#C94EFF);border-radius:16px;
               padding:24px 28px;color:#fff;margin-bottom:32px;">
     <div style="display:flex;flex-wrap:wrap;gap:24px;justify-content:space-between;">
       <div>
@@ -328,7 +328,7 @@ def build_pdf_report(
     pdf.ln(8)
 
     # ---- Summary box (single tone) ----
-    r, g, b = _hex_to_rgb("#5BC8F0")
+    r, g, b = _hex_to_rgb("#00BCE7")
     pdf.set_fill_color(r, g, b)
     box_y = pdf.get_y()
     usable = pdf.w - 20
@@ -381,7 +381,7 @@ def build_pdf_report(
         if pdf.get_y() > pdf.h - 60:
             pdf.add_page()
         pdf.set_font("Lato", "B", 13)
-        pdf.set_text_color(91, 200, 240)
+        pdf.set_text_color(0, 188, 231)
         pdf.cell(0, 8, "AI Theme Summary", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
         pdf.set_font("Lato", "", 9)
@@ -494,8 +494,8 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     # Reply marker
     if c.get("is_reply"):
         pdf.set_font("Lato", "I", 6)
-        pdf.set_fill_color(230, 248, 252)
-        pdf.set_text_color(91, 200, 240)
+        pdf.set_fill_color(224, 247, 252)
+        pdf.set_text_color(0, 188, 231)
         pdf.cell(12, 4, " reply", fill=True, new_x="END")
         pdf.cell(3, 4, "", new_x="END")  # spacer
 
@@ -535,7 +535,7 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     if c.get("back_translation") and c.get("original_language"):
         pdf.set_x(content_x)
         pdf.set_font("Lato", "I", 8)
-        pdf.set_text_color(91, 200, 240)
+        pdf.set_text_color(0, 188, 231)
         bt = _safe(c["back_translation"])
         pdf.multi_cell(text_w, 4, f"EN: {bt}", new_x="LMARGIN", new_y="NEXT")
 

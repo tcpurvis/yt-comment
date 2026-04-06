@@ -21,9 +21,9 @@ SUPPORTED_LANGUAGES = {
 }
 
 SENTIMENT_COLORS = {
-    "Positive": "#5CEAAF",
-    "Negative": "#F87171",
-    "Neutral": "#A78BFA",
+    "Positive": "#1CE8B5",
+    "Negative": "#FF5E5B",
+    "Neutral": "#C94EFF",
 }
 
 # Pre-built keyword filter presets
@@ -110,12 +110,12 @@ KEYWORD_PRESETS = {
 }
 
 THEME_PALETTE = [
-    "#5BC8F0",  # cyan
-    "#F472B6",  # pink
-    "#5CEAAF",  # mint
-    "#A78BFA",  # purple
-    "#FDE047",  # yellow
-    "#F87171",  # coral
-    "#D4F655",  # lime
-    "#FB923C",  # orange
+    "#00BCE7",  # cyan
+    "#E64783",  # pink
+    "#1CE8B5",  # teal/mint
+    "#C94EFF",  # purple
+    "#FFD93D",  # yellow
+    "#FF5E5B",  # coral/red
+    "#CCF913",  # lime green
+    "#FF9500",  # orange
 ]
