@@ -7,7 +7,7 @@ import anthropic
 import streamlit as st
 from googleapiclient.discovery import build
 
-from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES, SENTIMENT_COLORS, KEYWORD_PRESETS
+from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES, SENTIMENT_COLORS, KEYWORD_PRESETS, LANGUAGE_NAMES
 from analysis import add_sentiment, cluster_into_themes, get_theme_summary, get_sentiment_counts
 from translate import translate_keywords, add_back_translations, back_translate, batch_back_translate, detect_language
 from report import (
@@ -837,14 +837,10 @@ def main():
     kws = st.session_state.get("keywords", [])
 
     # --- Language Detection ---
-    _lang_code_to_name = {v: k for k, v in SUPPORTED_LANGUAGES.items()}
-    _lang_code_to_name["en"] = "English"
-    _lang_code_to_name["all"] = "All (unfiltered)"
-
     lang_counts: dict[str, int] = {}
     for c in all_comments:
         lc = c.get("matched_language", "en")
-        name = _lang_code_to_name.get(lc, lc)
+        name = LANGUAGE_NAMES.get(lc, lc)
         lang_counts[name] = lang_counts.get(name, 0) + 1
 
     non_english = [
@@ -887,9 +883,7 @@ def main():
     # Initialize filter defaults in session state on first analysis
     all_video_titles = sorted(set(c.get("video_title", "") for c in all_comments))
     # Build language label lookup: code -> display name
-    _lang_code_to_name = {v: k for k, v in SUPPORTED_LANGUAGES.items()}
-    _lang_code_to_name["en"] = "English"
-    _lang_code_to_name["all"] = "All (unfiltered)"
+    _lang_code_to_name = LANGUAGE_NAMES
     all_languages = sorted(set(c.get("matched_language", "en") for c in all_comments))
     all_language_labels = [_lang_code_to_name.get(lc, lc) for lc in all_languages]
 

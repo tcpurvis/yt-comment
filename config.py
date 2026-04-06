@@ -20,6 +20,28 @@ SUPPORTED_LANGUAGES = {
     "Indonesian": "id",
 }
 
+# Extended language code to name mapping for display purposes
+LANGUAGE_NAMES = {
+    "en": "English", "es": "Spanish", "fr": "French", "de": "German",
+    "pt": "Portuguese", "it": "Italian", "ja": "Japanese", "ko": "Korean",
+    "zh-CN": "Chinese (Simplified)", "zh": "Chinese", "hi": "Hindi",
+    "ar": "Arabic", "ru": "Russian", "tr": "Turkish", "th": "Thai",
+    "vi": "Vietnamese", "id": "Indonesian", "pl": "Polish", "nl": "Dutch",
+    "sv": "Swedish", "da": "Danish", "no": "Norwegian", "fi": "Finnish",
+    "cs": "Czech", "sk": "Slovak", "hu": "Hungarian", "ro": "Romanian",
+    "bg": "Bulgarian", "hr": "Croatian", "sr": "Serbian", "uk": "Ukrainian",
+    "el": "Greek", "he": "Hebrew", "fa": "Persian", "ms": "Malay",
+    "tl": "Filipino", "bn": "Bengali", "ta": "Tamil", "te": "Telugu",
+    "ml": "Malayalam", "kn": "Kannada", "mr": "Marathi", "gu": "Gujarati",
+    "ur": "Urdu", "sw": "Swahili", "af": "Afrikaans", "ca": "Catalan",
+    "eu": "Basque", "gl": "Galician", "is": "Icelandic", "lt": "Lithuanian",
+    "lv": "Latvian", "et": "Estonian", "sl": "Slovenian", "sq": "Albanian",
+    "mk": "Macedonian", "ka": "Georgian", "hy": "Armenian", "az": "Azerbaijani",
+    "uz": "Uzbek", "kk": "Kazakh", "mn": "Mongolian", "my": "Burmese",
+    "km": "Khmer", "lo": "Lao", "ne": "Nepali", "si": "Sinhala",
+    "all": "All (unfiltered)",
+}
+
 SENTIMENT_COLORS = {
     "Positive": "#1CE8B5",
     "Negative": "#FF5E5B",
