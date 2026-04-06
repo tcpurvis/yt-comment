@@ -299,8 +299,50 @@ def filter_comments(
 
 def main():
     st.set_page_config(page_title="BEAST | YouTube Comment Analysis", layout="wide")
-    st.title("YouTube Comment Analysis")
-    st.caption("Search · Analyze sentiment · Discover themes · Export PDF")
+
+    # Sticky header with title + save button
+    st.html("""
+    <style>
+    div[data-testid="stMainBlockContainer"] > div:first-child {
+        position: sticky;
+        top: 0;
+        z-index: 999;
+        background: white;
+        padding: 0.5rem 0;
+    }
+    </style>
+    """)
+    header_left, header_right = st.columns([0.7, 0.3])
+    with header_left:
+        st.title("YouTube Comment Analysis")
+        st.caption("Search · Analyze sentiment · Discover themes · Export PDF")
+    with header_right:
+        # Save project button (only when data exists)
+        if "raw_comments" in st.session_state:
+            _raw_h = st.session_state["raw_comments"]
+            _sq_h = st.session_state.get("search_query", "export")
+            _vtitles_h = sorted(set(c.get("video_title", "") for c in _raw_h if c.get("video_title")))
+            _tslug_h = re.sub(r"[^\w\s-]", "", _vtitles_h[0] if len(_vtitles_h) == 1 else "multiple_videos")
+            _tslug_h = re.sub(r"\s+", "_", _tslug_h.strip())[:50]
+            from datetime import datetime as _dt_h
+            _exp_ts_h = _dt_h.now().strftime("%Y-%m-%d_%H%M%S")
+
+            _payload_h: dict = {"search_query": _sq_h, "comments": _raw_h}
+            if "analyzed_comments" in st.session_state:
+                _payload_h["analyzed_comments"] = st.session_state["analyzed_comments"]
+                _payload_h["hidden_ids"] = list(st.session_state.get("hidden_ids", set()))
+                _payload_h["keywords"] = st.session_state.get("keywords", [])
+                _payload_h["preset"] = st.session_state.get("keyword_preset", "Custom")
+                _payload_h["ai_summary"] = st.session_state.get("ai_summary", "")
+
+            _data_h = json.dumps(_payload_h, ensure_ascii=False).encode("utf-8")
+            st.download_button(
+                label="Save Project",
+                data=_data_h,
+                file_name=f"{_tslug_h}_{_exp_ts_h}.json",
+                mime="application/json",
+                key="save_project_header",
+            )
 
     api_key = st.secrets.get("YOUTUBE_API_KEY", "")
     if not api_key:
@@ -591,35 +633,7 @@ def main():
                 f"({v_top:,} top-level, {v_replies:,} replies)"
             )
 
-    # Export JSON (only for fetch flows, not uploads)
-    if input_mode != "Upload previous export":
-        from datetime import datetime as _dt
-        _exp_ts_j = _dt.now().strftime("%Y-%m-%d_%H%M%S")
-        _vtitles_j = sorted(set(c.get("video_title", "") for c in raw_comments if c.get("video_title")))
-        _tslug_j = re.sub(r"[^\w\s-]", "", _vtitles_j[0] if len(_vtitles_j) == 1 else "multiple_videos")
-        _tslug_j = re.sub(r"\s+", "_", _tslug_j.strip())[:50]
-
-        # Build export with session state
-        _export_payload: dict = {
-            "search_query": sq,
-            "comments": raw_comments,
-        }
-        # Include analysis state if available
-        if "analyzed_comments" in st.session_state:
-            _export_payload["analyzed_comments"] = st.session_state["analyzed_comments"]
-            _export_payload["hidden_ids"] = list(st.session_state.get("hidden_ids", set()))
-            _export_payload["keywords"] = st.session_state.get("keywords", [])
-            _export_payload["preset"] = st.session_state.get("keyword_preset", "Custom")
-            _export_payload["ai_summary"] = st.session_state.get("ai_summary", "")
-
-        _exp_data = json.dumps(_export_payload, ensure_ascii=False).encode("utf-8")
-        st.download_button(
-            label="Save Project (JSON)",
-            data=_exp_data,
-            file_name=f"{_tslug_j}_{_exp_ts_j}.json",
-            mime="application/json",
-        )
-        st.caption("Save your progress to pick up where you left off without another API pull.")
+    # (Save Project button is in the sticky header)
 
     _analysis_done = "analyzed_comments" in st.session_state
     _analyze_expander = st.expander(
