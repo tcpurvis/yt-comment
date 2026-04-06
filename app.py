@@ -1,3 +1,6 @@
+import re
+from urllib.parse import urlparse, parse_qs
+
 import streamlit as st
 import streamlit.components.v1 as components
 from googleapiclient.discovery import build
@@ -32,6 +35,48 @@ def search_videos(youtube, query: str, max_results: int = 20) -> list[dict]:
             )
         request = youtube.search().list_next(request, response)
     return videos[:max_results]
+
+
+def extract_video_ids(text: str) -> list[str]:
+    """Extract YouTube video IDs from URLs or raw IDs, one per line."""
+    ids = []
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Try parsing as a URL first
+        parsed = urlparse(line)
+        if parsed.hostname in ("www.youtube.com", "youtube.com", "m.youtube.com"):
+            vid = parse_qs(parsed.query).get("v", [None])[0]
+            if vid:
+                ids.append(vid)
+                continue
+        if parsed.hostname == "youtu.be":
+            vid = parsed.path.lstrip("/").split("/")[0]
+            if vid:
+                ids.append(vid)
+                continue
+        # Try extracting an 11-char video ID from the string
+        match = re.search(r"[A-Za-z0-9_-]{11}", line)
+        if match:
+            ids.append(match.group())
+    return ids
+
+
+def get_video_info(youtube, video_ids: list[str]) -> list[dict]:
+    """Fetch video titles for a list of video IDs."""
+    videos = []
+    # API allows up to 50 IDs per call
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i : i + 50]
+        response = youtube.videos().list(
+            part="snippet", id=",".join(batch)
+        ).execute()
+        for item in response.get("items", []):
+            videos.append(
+                {"video_id": item["id"], "title": item["snippet"]["title"]}
+            )
+    return videos
 
 
 def fetch_comments(youtube, video_id: str, max_comments: int = 100) -> list[dict]:
@@ -122,10 +167,24 @@ def main():
     )
 
     # --- Main inputs ---
-    search_query = st.text_input(
-        "Search YouTube for videos",
-        placeholder="e.g. python tutorial",
+    input_mode = st.radio(
+        "How do you want to find videos?",
+        ["Paste video URLs", "Search YouTube"],
+        horizontal=True,
     )
+
+    if input_mode == "Paste video URLs":
+        url_input = st.text_area(
+            "YouTube video URLs (one per line)",
+            placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ\nhttps://youtu.be/abc123XYZab",
+            height=120,
+        )
+    else:
+        search_query = st.text_input(
+            "Search YouTube for videos",
+            placeholder="e.g. python tutorial",
+        )
+
     keyword_input = st.text_input(
         "Filter comments by keywords (comma-separated)",
         placeholder="e.g. great, awesome, helpful",
@@ -140,17 +199,32 @@ def main():
     exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
 
     if st.button("Fetch & Analyze", type="primary"):
-        if not search_query:
-            st.warning("Please enter a search query.")
-            return
         if not keywords:
             st.warning("Enter at least one keyword to filter comments.")
             return
 
         youtube = get_youtube_client(api_key)
 
+        # --- Resolve target videos ---
+        if input_mode == "Paste video URLs":
+            video_ids = extract_video_ids(url_input if "url_input" in dir() else "")
+            if not video_ids:
+                st.warning("Please paste at least one valid YouTube URL.")
+                return
+            with st.spinner("Looking up videos..."):
+                direct_videos = get_video_info(youtube, video_ids)
+            if not direct_videos:
+                st.error("Could not find any of the provided video IDs.")
+                return
+            search_query = ", ".join(video_ids)
+        else:
+            if not search_query:
+                st.warning("Please enter a search query.")
+                return
+            direct_videos = None
+
         # --- Build search queries per language ---
-        search_plans = [{"query": search_query, "keywords": keywords, "lang": None}]
+        search_plans = [{"keywords": keywords, "lang": None}]
 
         if selected_langs:
             with st.spinner("Translating keywords..."):
@@ -158,10 +232,8 @@ def main():
                     lang_code = SUPPORTED_LANGUAGES[lang_name]
                     translated_kw = translate_keywords(keywords, lang_code)
                     if translated_kw:
-                        translated_query = " ".join(translated_kw)
                         search_plans.append(
                             {
-                                "query": translated_query,
                                 "keywords": translated_kw,
                                 "lang": lang_code,
                             }
@@ -171,10 +243,16 @@ def main():
         all_comments: list[dict] = []
         total_plans = len(search_plans)
 
-        for plan_idx, plan in enumerate(search_plans):
+        for plan in search_plans:
             lang_label = plan["lang"] or "English"
-            with st.spinner(f"Searching videos ({lang_label})..."):
-                videos = search_videos(youtube, plan["query"], max_videos)
+
+            # Get videos: use direct list or search
+            if direct_videos is not None:
+                videos = direct_videos
+            else:
+                translated_query = " ".join(plan["keywords"]) if plan["lang"] else search_query
+                with st.spinner(f"Searching videos ({lang_label})..."):
+                    videos = search_videos(youtube, translated_query, max_videos)
 
             if not videos:
                 continue
