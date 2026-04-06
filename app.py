@@ -567,6 +567,13 @@ def main():
 
     # --- Download raw export ---
     st.divider()
+    from datetime import datetime
+    _export_ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    _video_titles = sorted(set(c.get("video_title", "") for c in raw_comments if c.get("video_title")))
+    _title_slug = re.sub(r"[^\w\s-]", "", _video_titles[0] if len(_video_titles) == 1 else "multiple_videos")
+    _title_slug = re.sub(r"\s+", "_", _title_slug.strip())[:50]
+    _export_filename = f"{_title_slug}_{_export_ts}.json"
+
     export_data = json.dumps(
         {"search_query": sq, "comments": raw_comments},
         ensure_ascii=False,
@@ -607,7 +614,7 @@ def main():
         st.download_button(
             label="Export Raw Comments (JSON)",
             data=export_data,
-            file_name="youtube_comments_raw.json",
+            file_name=_export_filename,
             mime="application/json",
         )
 
@@ -1166,7 +1173,7 @@ def main():
     st.download_button(
         label="Download PDF Report",
         data=pdf_bytes,
-        file_name="youtube_comment_report.pdf",
+        file_name=f"{_title_slug}_{_export_ts}_report.pdf",
         mime="application/pdf",
         type="primary",
     )
