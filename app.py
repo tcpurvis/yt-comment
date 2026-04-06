@@ -1,13 +1,17 @@
 import re
+import html as html_mod
 from urllib.parse import urlparse, parse_qs
 
 import streamlit as st
 from googleapiclient.discovery import build
 
 from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES
-from analysis import add_sentiment, cluster_into_themes
+from analysis import add_sentiment, cluster_into_themes, get_theme_summary, get_sentiment_counts
 from translate import translate_keywords, add_back_translations
-from report import build_html_report, build_pdf_report
+from report import (
+    build_html_report, build_pdf_report,
+    _sentiment_badge, _avatar_color, _initials, _format_date,
+)
 
 
 def get_youtube_client(api_key: str):
@@ -43,7 +47,6 @@ def extract_video_ids(text: str) -> list[str]:
         line = line.strip()
         if not line:
             continue
-        # Try parsing as a URL first
         parsed = urlparse(line)
         if parsed.hostname in ("www.youtube.com", "youtube.com", "m.youtube.com"):
             vid = parse_qs(parsed.query).get("v", [None])[0]
@@ -55,7 +58,6 @@ def extract_video_ids(text: str) -> list[str]:
             if vid:
                 ids.append(vid)
                 continue
-        # Try extracting an 11-char video ID from the string
         match = re.search(r"[A-Za-z0-9_-]{11}", line)
         if match:
             ids.append(match.group())
@@ -65,7 +67,6 @@ def extract_video_ids(text: str) -> list[str]:
 def get_video_info(youtube, video_ids: list[str]) -> list[dict]:
     """Fetch video titles for a list of video IDs."""
     videos = []
-    # API allows up to 50 IDs per call
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i : i + 50]
         response = youtube.videos().list(
@@ -115,7 +116,7 @@ def filter_comments(
 ) -> list[dict]:
     """Keep comments where any keyword appears and no exclude keyword appears (case-insensitive)."""
     if not keywords:
-        return comments
+        return list(comments)
     exclude_keywords = exclude_keywords or []
     results = []
     for c in comments:
@@ -126,6 +127,75 @@ def filter_comments(
             continue
         results.append(c)
     return results
+
+
+# ---------------------------------------------------------------------------
+# Apply filters + analysis to the cached raw comments (no API calls)
+# ---------------------------------------------------------------------------
+def apply_filters_and_analysis(
+    raw_comments: list[dict],
+    keywords: list[str],
+    exclude_keywords: list[str],
+    search_all: bool,
+    selected_lang_codes: list[str],
+    no_match_limit: bool,
+    max_matches: float,
+) -> list[dict]:
+    """Filter, translate, sentiment-score, and cluster cached comments."""
+    if search_all:
+        matched = [dict(c) for c in raw_comments]  # shallow copies
+    else:
+        # Build all keyword sets (English + translated)
+        all_kw_sets: list[tuple[list[str], str | None]] = [(keywords, None)]
+        for lang_code in selected_lang_codes:
+            translated_kw = translate_keywords(keywords, lang_code)
+            if translated_kw:
+                all_kw_sets.append((translated_kw, lang_code))
+
+        # Match against each keyword set, deduplicate, track language
+        seen: set[int] = set()
+        matched: list[dict] = []
+        for idx, c in enumerate(raw_comments):
+            for plan_kws, plan_lang in all_kw_sets:
+                text = c["comment"].lower()
+                if not any(kw.lower() in text for kw in plan_kws):
+                    continue
+                if exclude_keywords and any(ex.lower() in text for ex in exclude_keywords):
+                    continue
+                if idx in seen:
+                    continue
+                seen.add(idx)
+                copy = dict(c)
+                if plan_lang:
+                    copy["_needs_bt"] = plan_lang
+                matched.append(copy)
+                break  # first matching keyword set wins
+
+        # Back-translate comments that matched via non-English keywords
+        needs_bt = [m for m in matched if m.get("_needs_bt")]
+        if needs_bt:
+            by_lang: dict[str, list[dict]] = {}
+            for m in needs_bt:
+                by_lang.setdefault(m.pop("_needs_bt"), []).append(m)
+            for lang_code, group in by_lang.items():
+                add_back_translations(group, lang_code)
+
+    # Apply match limit
+    if not no_match_limit and len(matched) > max_matches:
+        matched = matched[: int(max_matches)]
+
+    if not matched:
+        return []
+
+    # Sentiment + themes
+    add_sentiment(matched)
+    cluster_into_themes(matched)
+
+    # Assign stable IDs
+    for idx, c in enumerate(matched):
+        c["_id"] = idx
+
+    return matched
 
 
 def main():
@@ -170,6 +240,7 @@ def main():
         help="Keywords will be translated and used to search for comments in each selected language. "
              "Matching comments will include a back-translation to English.",
     )
+    selected_lang_codes = [SUPPORTED_LANGUAGES[n] for n in selected_langs]
 
     # --- Main inputs ---
     input_mode = st.radio(
@@ -214,7 +285,7 @@ def main():
         keywords = []
         exclude_keywords = []
 
-    # --- Quota estimate (sidebar, rendered after all inputs are known) ---
+    # --- Quota estimate ---
     if input_mode == "Paste video URLs":
         _est_videos = len(extract_video_ids(url_input)) if url_input.strip() else 1
         _search_cost = 0
@@ -224,8 +295,7 @@ def main():
 
     _pages_per_video = (max_scan + 99) // 100
     _comment_cost = _est_videos * _pages_per_video
-    _lang_multiplier = 1 + len(selected_langs)
-    _total_est = (_search_cost + _comment_cost) * _lang_multiplier
+    _total_est = _search_cost + _comment_cost
 
     _pct = min(_total_est / 10_000 * 100, 100)
     _color = "🟢" if _pct < 25 else "🟡" if _pct < 60 else "🔴"
@@ -233,184 +303,113 @@ def main():
     st.sidebar.markdown(
         f"### API Quota Estimate\n"
         f"{_color} **~{_total_est:,} units** of 10,000 daily quota ({_pct:.0f}%)\n\n"
-        f"<small>{_est_videos} video(s) &times; {_pages_per_video:,} pages/video "
-        f"&times; {_lang_multiplier} language(s)"
+        f"<small>{_est_videos} video(s) &times; {_pages_per_video:,} pages/video"
         f"{f' + {_search_cost} search' if _search_cost else ''}</small>",
         unsafe_allow_html=True,
     )
 
-    if st.button("Fetch & Analyze", type="primary"):
-        if not search_all and not keywords:
-            st.warning("Enter at least one keyword or check 'Return all comments'.")
-            return
-
+    # ===================================================================
+    # PHASE 1: FETCH — hits the API, stores raw comments in session state
+    # ===================================================================
+    if st.button("Fetch Comments", type="primary"):
         youtube = get_youtube_client(api_key)
 
-        # --- Resolve target videos ---
         if input_mode == "Paste video URLs":
-            video_ids = extract_video_ids(url_input if "url_input" in dir() else "")
+            video_ids = extract_video_ids(url_input)
             if not video_ids:
                 st.warning("Please paste at least one valid YouTube URL.")
                 return
             with st.spinner("Looking up videos..."):
-                direct_videos = get_video_info(youtube, video_ids)
-            if not direct_videos:
+                videos = get_video_info(youtube, video_ids)
+            if not videos:
                 st.error("Could not find any of the provided video IDs.")
                 return
-            search_query = ", ".join(video_ids)
+            sq = ", ".join(v["title"] for v in videos)
         else:
             if not search_query:
                 st.warning("Please enter a search query.")
                 return
-            direct_videos = None
+            with st.spinner("Searching videos..."):
+                videos = search_videos(youtube, search_query, max_videos)
+            if not videos:
+                st.warning("No videos found.")
+                return
+            sq = search_query
 
-        # --- Build keyword sets per language ---
-        keyword_plans: list[dict] = [{"keywords": keywords, "lang": None}]
+        raw_comments: list[dict] = []
+        progress = st.progress(0, text="Fetching comments...")
+        for i, video in enumerate(videos):
+            batch = fetch_comments(youtube, video["video_id"], max_scan)
+            for c in batch:
+                c["video_title"] = video["title"]
+            raw_comments.extend(batch)
+            progress.progress((i + 1) / len(videos))
+        progress.empty()
 
-        if selected_langs:
-            with st.spinner("Translating keywords..."):
-                for lang_name in selected_langs:
-                    lang_code = SUPPORTED_LANGUAGES[lang_name]
-                    translated_kw = translate_keywords(keywords, lang_code)
-                    if translated_kw:
-                        keyword_plans.append(
-                            {"keywords": translated_kw, "lang": lang_code}
-                        )
+        # Store raw (unfiltered) comments
+        st.session_state["raw_comments"] = raw_comments
+        st.session_state["search_query"] = sq
+        st.session_state.pop("analyzed_comments", None)
+        st.session_state.pop("hidden_ids", None)
 
-        # --- Fetch and filter ---
-        all_comments: list[dict] = []
-        total_plans = len(keyword_plans)
-
-        if direct_videos is not None:
-            # URL mode: fetch each video ONCE, filter with all keyword sets
-            all_kw_sets = [
-                (plan["keywords"], plan["lang"]) for plan in keyword_plans
-            ]
-
-            progress = st.progress(0, text="Fetching comments...")
-            for i, video in enumerate(direct_videos):
-                if len(all_comments) >= max_matches:
-                    break
-                comments = fetch_comments(youtube, video["video_id"], max_scan)
-                for c in comments:
-                    c["video_title"] = video["title"]
-
-                if search_all:
-                    matched = comments
-                else:
-                    # Try each keyword set; track which language matched
-                    seen_ids = set()
-                    matched = []
-                    for plan_kws, plan_lang in all_kw_sets:
-                        hits = filter_comments(comments, plan_kws, exclude_keywords)
-                        for h in hits:
-                            ckey = id(h)
-                            if ckey in seen_ids:
-                                continue
-                            seen_ids.add(ckey)
-                            if plan_lang:
-                                h = {**h}  # shallow copy so we don't mutate original
-                                h["_needs_bt"] = plan_lang
-                            matched.append(h)
-
-                    # Back-translate comments that matched via non-English keywords
-                    needs_bt = [m for m in matched if m.get("_needs_bt")]
-                    if needs_bt:
-                        by_lang: dict[str, list[dict]] = {}
-                        for m in needs_bt:
-                            by_lang.setdefault(m["_needs_bt"], []).append(m)
-                        for lang_code, group in by_lang.items():
-                            add_back_translations(group, lang_code)
-                        for m in needs_bt:
-                            m.pop("_needs_bt", None)
-
-                if no_match_limit:
-                    all_comments.extend(matched)
-                else:
-                    remaining = max_matches - len(all_comments)
-                    all_comments.extend(matched[:remaining])
-                progress.progress((i + 1) / len(direct_videos))
-            progress.empty()
-        else:
-            # Search mode: each language plan may find different videos,
-            # so we still fetch per plan
-            for plan in keyword_plans:
-                lang_label = plan["lang"] or "English"
-
-                translated_query = " ".join(plan["keywords"]) if plan["lang"] else search_query
-                with st.spinner(f"Searching videos ({lang_label})..."):
-                    videos = search_videos(youtube, translated_query, max_videos)
-
-                if not videos:
-                    continue
-
-                progress = st.progress(0, text=f"Fetching comments ({lang_label})...")
-                for i, video in enumerate(videos):
-                    if len(all_comments) >= max_matches:
-                        break
-                    comments = fetch_comments(youtube, video["video_id"], max_scan)
-                    for c in comments:
-                        c["video_title"] = video["title"]
-                    if search_all:
-                        filtered = comments
-                    else:
-                        filtered = filter_comments(comments, plan["keywords"], exclude_keywords)
-
-                    if plan["lang"]:
-                        filtered = add_back_translations(filtered, plan["lang"])
-
-                    if no_match_limit:
-                        all_comments.extend(filtered)
-                    else:
-                        remaining = max_matches - len(all_comments)
-                        all_comments.extend(filtered[:remaining])
-                    progress.progress((i + 1) / len(videos))
-                progress.empty()
-
-        if not all_comments:
-            st.warning("No comments matched your keywords in any language.")
-            return
-
-        # --- Analysis ---
-        with st.spinner("Analyzing sentiment..."):
-            all_comments = add_sentiment(all_comments)
-
-        with st.spinner("Discovering themes..."):
-            all_comments = cluster_into_themes(all_comments)
-
-        st.success(
-            f"Analyzed **{len(all_comments)}** matched comments "
-            f"across **{total_plans}** language(s)."
-        )
-
-        # Assign each comment a stable id for hiding
-        for idx, c in enumerate(all_comments):
-            c["_id"] = idx
-
-        # Store in session state
-        st.session_state["all_comments"] = all_comments
-        st.session_state["hidden_ids"] = set()
-        st.session_state["search_query"] = search_query
-        st.session_state["keywords"] = keywords
+        st.success(f"Fetched **{len(raw_comments):,}** comments from **{len(videos)}** video(s). "
+                   "Adjust keywords/languages below and click **Apply Filters & Analyze**.")
 
     # --- Nothing fetched yet ---
-    if "all_comments" not in st.session_state:
+    if "raw_comments" not in st.session_state:
         return
 
-    all_comments = st.session_state["all_comments"]
-    hidden_ids = st.session_state["hidden_ids"]
-    query = st.session_state["search_query"]
-    kws = st.session_state["keywords"]
+    raw_comments = st.session_state["raw_comments"]
+    sq = st.session_state["search_query"]
 
-    # --- Inline preview with hide toggles ---
+    st.divider()
+    st.caption(
+        f"**{len(raw_comments):,}** cached comments available. "
+        "Change keywords, languages, or limits and re-analyze without re-fetching."
+    )
+
+    # ===================================================================
+    # PHASE 2: ANALYZE — local filtering, translation, sentiment, themes
+    # ===================================================================
+    if st.button("Apply Filters & Analyze"):
+        if not search_all and not keywords:
+            st.warning("Enter at least one keyword or check 'Return all comments'.")
+            return
+
+        with st.spinner("Filtering and analyzing..."):
+            analyzed = apply_filters_and_analysis(
+                raw_comments,
+                keywords,
+                exclude_keywords,
+                search_all,
+                selected_lang_codes,
+                no_match_limit,
+                max_matches,
+            )
+
+        if not analyzed:
+            st.warning("No comments matched your filters.")
+            return
+
+        st.session_state["analyzed_comments"] = analyzed
+        st.session_state["hidden_ids"] = set()
+        st.session_state["keywords"] = keywords
+        st.success(f"**{len(analyzed):,}** comments match your filters.")
+
+    # --- Nothing analyzed yet ---
+    if "analyzed_comments" not in st.session_state:
+        return
+
+    all_comments = st.session_state["analyzed_comments"]
+    hidden_ids = st.session_state.get("hidden_ids", set())
+    kws = st.session_state.get("keywords", [])
+
+    # --- Preview ---
     st.divider()
     st.subheader("Report Preview")
     st.caption("Un-check any comment to exclude it from the report and PDF.")
 
-    from analysis import get_theme_summary, get_sentiment_counts
-    from report import _sentiment_badge, _avatar_color, _initials, _format_date
-
-    # --- Video filter (only when comments span multiple videos) ---
+    # --- Video filter ---
     all_video_titles = sorted(set(c.get("video_title", "") for c in all_comments))
     if len(all_video_titles) > 1:
         selected_videos = st.multiselect(
@@ -427,39 +426,34 @@ def main():
     sentiment_counts = get_sentiment_counts(display_comments)
     total = len(display_comments)
 
-    # Overall sentiment summary
-    _bar_html = ""
-    for label in ["Positive", "Neutral", "Negative"]:
-        count = sentiment_counts.get(label, 0)
-        pct = count / total * 100 if total else 0
-        color = {"Positive": "#2e7d32", "Negative": "#c62828", "Neutral": "#616161"}[label]
-        emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
-        if pct > 0:
-            _bar_html += (
-                f'<div style="flex:{pct};background:{color};height:32px;'
-                f'display:flex;align-items:center;justify-content:center;'
-                f'color:#fff;font-size:12px;font-weight:600;'
-                f'min-width:{40 if pct > 3 else 0}px;">'
-                f'{emoji} {count} ({pct:.0f}%)</div>'
-            )
-    st.html(
-        f'<div style="display:flex;border-radius:12px;overflow:hidden;'
-        f'margin:8px 0 16px 0;">{_bar_html}</div>'
-    )
+    # Overall sentiment bar
+    if total > 0:
+        _bar_html = ""
+        for label in ["Positive", "Neutral", "Negative"]:
+            count = sentiment_counts.get(label, 0)
+            pct = count / total * 100
+            color = {"Positive": "#2e7d32", "Negative": "#c62828", "Neutral": "#616161"}[label]
+            emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
+            if pct > 0:
+                _bar_html += (
+                    f'<div style="flex:{pct};background:{color};height:32px;'
+                    f'display:flex;align-items:center;justify-content:center;'
+                    f'color:#fff;font-size:12px;font-weight:600;'
+                    f'min-width:{40 if pct > 3 else 0}px;">'
+                    f'{emoji} {count} ({pct:.0f}%)</div>'
+                )
+        st.html(
+            f'<div style="display:flex;border-radius:12px;overflow:hidden;'
+            f'margin:8px 0 16px 0;">{_bar_html}</div>'
+        )
 
-    # Render each theme with styled comment cards + checkboxes
-    display_ids = {c["_id"] for c in display_comments}
+    # Render themed comment cards with checkboxes
     visible_comments = []
     for i, (theme_name, theme_comments) in enumerate(themes.items()):
-        palette = ["#6366f1", "#ec4899", "#f59e0b", "#10b981",
-                    "#3b82f6", "#ef4444", "#8b5cf6", "#14b8a6"]
-        t_color = palette[i % len(palette)]
-
         with st.expander(f"**{theme_name}** — {len(theme_comments)} comments", expanded=True):
             for c in theme_comments:
                 cid = c["_id"]
 
-                # Checkbox + styled card side by side
                 col_cb, col_card = st.columns([0.05, 0.95], vertical_alignment="top")
                 with col_cb:
                     kept = st.checkbox(
@@ -490,7 +484,6 @@ def main():
 
                     translation_html = ""
                     if c.get("back_translation") and c.get("original_language"):
-                        import html as html_mod
                         bt = html_mod.escape(c["back_translation"])
                         translation_html = (
                             f'<div style="margin-top:8px;padding:8px 12px;background:#f0f4ff;'
@@ -498,11 +491,9 @@ def main():
                             f'color:#4a5568;font-style:italic;">🌐 English: {bt}</div>'
                         )
 
-                    import html as html_mod
                     comment_text = html_mod.escape(c["comment"])
                     author_text = html_mod.escape(c["author"])
 
-                    # Video title tag (shown when multiple videos)
                     video_tag_html = ""
                     if len(all_video_titles) > 1 and c.get("video_title"):
                         vt = html_mod.escape(c["video_title"])
@@ -545,9 +536,8 @@ def main():
         st.warning("All comments are hidden. Check at least one to generate a report.")
         return
 
-    # --- Build PDF from visible comments only ---
-    html_report = build_html_report(visible_comments, query, kws)
-    pdf_bytes = build_pdf_report(visible_comments, query, kws)
+    # --- PDF export ---
+    pdf_bytes = build_pdf_report(visible_comments, sq, kws)
 
     st.download_button(
         label="Download PDF Report",
