@@ -204,6 +204,7 @@ def fetch_comments(
             order=sort_order,
         )
         consecutive_failures = 0
+        stale_pages = 0
         while request:
             if max_comments is not None and len(comments) >= max_comments:
                 break
@@ -216,11 +217,13 @@ def fetch_comments(
                     break
                 continue
 
+            new_on_page = 0
             for item in response.get("items", []):
                 thread_id = item["snippet"]["topLevelComment"]["id"]
                 if thread_id in seen_ids:
                     continue
                 seen_ids.add(thread_id)
+                new_on_page += 1
 
                 snippet = item["snippet"]["topLevelComment"]["snippet"]
                 reply_count = item["snippet"]["totalReplyCount"]
@@ -236,6 +239,15 @@ def fetch_comments(
                         "comment_id": thread_id,
                     }
                 )
+
+            # Stop this sort order if pages return no new comments
+            if new_on_page == 0:
+                stale_pages += 1
+                if stale_pages >= 3:
+                    break
+            else:
+                stale_pages = 0
+
             if on_progress:
                 on_progress(len(comments))
             request = youtube.commentThreads().list_next(request, response)
