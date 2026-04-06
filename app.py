@@ -462,9 +462,6 @@ def main():
         exclude_keywords = []
         preset_translations = {}
 
-    # --- Sidebar: analysis settings (only shown after fetch) ---
-    st.sidebar.header("Analysis Settings")
-
     st.sidebar.header("Multi-Language Search")
     selected_langs = st.sidebar.multiselect(
         "Also search in these languages",
