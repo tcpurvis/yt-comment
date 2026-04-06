@@ -302,8 +302,11 @@ def main():
                 if plan["lang"]:
                     filtered = add_back_translations(filtered, plan["lang"])
 
-                remaining = max_matches - len(all_comments)
-                all_comments.extend(filtered[:remaining])
+                if no_match_limit:
+                    all_comments.extend(filtered)
+                else:
+                    remaining = max_matches - len(all_comments)
+                    all_comments.extend(filtered[:remaining])
                 progress.progress((i + 1) / len(videos))
             progress.empty()
 
