@@ -606,7 +606,7 @@ def main():
 
     _analysis_done = "analyzed_comments" in st.session_state
     _analyze_expander = st.expander(
-        f"**Filter & Analyze** — {total_raw:,} cached comments",
+        "**Filter & Analyze**",
         expanded=not _analysis_done,
     )
     with _analyze_expander:
