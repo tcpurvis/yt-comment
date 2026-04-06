@@ -16,10 +16,15 @@ A Streamlit app that searches YouTube videos by keyword, fetches their comments,
    ```
 
 3. **Configure API key**
-   ```bash
-   cp .env.example .env
+
+   **Locally:** Create `.streamlit/secrets.toml`:
+   ```toml
+   YOUTUBE_API_KEY = "your_api_key_here"
    ```
-   Edit `.env` and add your [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) key.
+
+   **Streamlit Cloud:** Add `YOUTUBE_API_KEY` in the app's Secrets panel.
+
+   Get a key from the [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) console.
 
 4. **Run the app**
    ```bash

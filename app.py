@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from googleapiclient.discovery import build
-from config import YOUTUBE_API_KEY, MAX_RESULTS_PER_PAGE
+from config import MAX_RESULTS_PER_PAGE
 
 
 def get_youtube_client(api_key: str):
@@ -75,11 +75,12 @@ def main():
     st.set_page_config(page_title="YouTube Comment Scraper", layout="wide")
     st.title("YouTube Comment Scraper")
 
-    api_key = st.sidebar.text_input(
-        "YouTube API Key", value=YOUTUBE_API_KEY, type="password"
-    )
+    api_key = st.secrets.get("YOUTUBE_API_KEY", "")
     if not api_key:
-        st.info("Enter your YouTube Data API v3 key in the sidebar to get started.")
+        st.error(
+            "Missing `YOUTUBE_API_KEY`. Add it to **Streamlit secrets** "
+            "(`.streamlit/secrets.toml` locally or the Secrets panel on Streamlit Cloud)."
+        )
         return
 
     search_query = st.text_input("Search YouTube for videos", placeholder="e.g. python tutorial")
