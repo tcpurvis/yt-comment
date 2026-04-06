@@ -110,12 +110,12 @@ KEYWORD_PRESETS = {
 }
 
 THEME_PALETTE = [
-    "#00BCE7",  # cyan accent
-    "#ec4899",  # pink
-    "#f59e0b",  # amber
-    "#10b981",  # emerald
-    "#3b82f6",  # blue
-    "#ef4444",  # red
-    "#8b5cf6",  # violet
-    "#14b8a6",  # teal
+    "#5BC8F0",  # cyan
+    "#F472B6",  # pink
+    "#5CEAAF",  # mint
+    "#A78BFA",  # purple
+    "#FDE047",  # yellow
+    "#F87171",  # coral
+    "#D4F655",  # lime
+    "#FB923C",  # orange
 ]

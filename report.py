@@ -15,11 +15,8 @@ def _initials(name: str) -> str:
 
 
 def _avatar_color(name: str) -> str:
-    colors = [
-        "#00BCE7", "#ec4899", "#f59e0b", "#10b981",
-        "#3b82f6", "#ef4444", "#009BBE", "#14b8a6",
-    ]
-    return colors[hash(name) % len(colors)]
+    from config import THEME_PALETTE
+    return THEME_PALETTE[hash(name) % len(THEME_PALETTE)]
 
 
 def _sentiment_badge(label: str) -> str:
@@ -85,7 +82,7 @@ def _comment_card(c: dict, show_video_tag: bool = False) -> str:
     if c.get("is_reply"):
         reply_marker = (
             '<span style="display:inline-block;padding:1px 6px;border-radius:4px;'
-            'font-size:10px;font-weight:500;color:#00BCE7;background:#e6f8fc;'
+            'font-size:10px;font-weight:500;color:#5BC8F0;background:#e6f8fc;'
             'margin-right:4px;">↩ reply</span>'
         )
 
@@ -94,7 +91,7 @@ def _comment_card(c: dict, show_video_tag: bool = False) -> str:
         bt = html.escape(c["back_translation"])
         translation_block = (
             f'<div style="margin-top:8px;padding:8px 12px;background:#f0f4ff;'
-            f'border-left:3px solid #00BCE7;border-radius:4px;font-size:13px;'
+            f'border-left:3px solid #5BC8F0;border-radius:4px;font-size:13px;'
             f'color:#4a5568;font-style:italic;">'
             f'🌐 English: {bt}</div>'
         )
@@ -166,7 +163,7 @@ def build_html_report(
         summary_section = f"""
         <div style="background:#f0fbfd;border:1px solid #c5edf5;border-radius:12px;
                     padding:20px 24px;margin-bottom:32px;">
-          <h2 style="margin:0 0 12px 0;font-size:16px;color:#00BCE7;">
+          <h2 style="margin:0 0 12px 0;font-size:16px;color:#5BC8F0;">
             🔍 AI Theme Summary
           </h2>
           <div style="font-size:14px;color:#1a1a1a;line-height:1.6;">
@@ -221,7 +218,7 @@ def build_html_report(
     <p style="font-size:14px;color:#6b7280;">Generated {now}</p>
   </div>
 
-  <div style="background:linear-gradient(135deg,#00BCE7,#009BBE);border-radius:16px;
+  <div style="background:linear-gradient(135deg,#5BC8F0,#A78BFA);border-radius:16px;
               padding:24px 28px;color:#fff;margin-bottom:32px;">
     <div style="display:flex;flex-wrap:wrap;gap:24px;justify-content:space-between;">
       <div>
@@ -313,7 +310,7 @@ def build_pdf_report(
     pdf.ln(8)
 
     # ---- Summary box ----
-    r, g, b = _hex_to_rgb("#00BCE7")
+    r, g, b = _hex_to_rgb("#5BC8F0")
     pdf.set_fill_color(r, g, b)
     pdf.set_text_color(255, 255, 255)
     box_y = pdf.get_y()
@@ -323,7 +320,7 @@ def build_pdf_report(
     pdf.rect(10, box_y, usable, box_h, "F")
 
     # Also draw a subtle gradient overlay (lighter right half)
-    r2, g2, b2 = _hex_to_rgb("#009BBE")
+    r2, g2, b2 = _hex_to_rgb("#A78BFA")
     pdf.set_fill_color(r2, g2, b2)
     pdf.rect(10 + usable / 2, box_y, usable / 2, box_h, "F")
 
@@ -370,7 +367,7 @@ def build_pdf_report(
         if pdf.get_y() > pdf.h - 60:
             pdf.add_page()
         pdf.set_font("Helvetica", "B", 13)
-        pdf.set_text_color(0, 188, 231)
+        pdf.set_text_color(91, 200, 240)
         pdf.cell(0, 8, "AI Theme Summary", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
         pdf.set_font("Helvetica", "", 9)
@@ -481,7 +478,7 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     if c.get("is_reply"):
         pdf.set_font("Helvetica", "I", 6)
         pdf.set_fill_color(230, 248, 252)
-        pdf.set_text_color(0, 188, 231)
+        pdf.set_text_color(91, 200, 240)
         pdf.cell(12, 4, " reply", fill=True, new_x="END")
         pdf.cell(3, 4, "", new_x="END")  # spacer
 
@@ -521,7 +518,7 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     if c.get("back_translation") and c.get("original_language"):
         pdf.set_x(content_x)
         pdf.set_font("Helvetica", "I", 8)
-        pdf.set_text_color(0, 188, 231)
+        pdf.set_text_color(91, 200, 240)
         bt = _safe(c["back_translation"])
         pdf.multi_cell(text_w, 4, f"EN: {bt}", new_x="LMARGIN", new_y="NEXT")
 

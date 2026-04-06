@@ -1073,7 +1073,7 @@ def main():
                     if c.get("is_reply"):
                         reply_marker = (
                             '<span style="display:inline-block;padding:1px 6px;border-radius:4px;'
-                            'font-size:10px;font-weight:500;color:#00BCE7;background:#e6f8fc;'
+                            'font-size:10px;font-weight:500;color:#5BC8F0;background:#e6f8fc;'
                             'margin-right:6px;">↩ reply</span>'
                         )
 
@@ -1089,7 +1089,7 @@ def main():
                         bt = html_mod.escape(c["back_translation"])
                         translation_html = (
                             f'<div style="margin-top:8px;padding:8px 12px;background:#f0f4ff;'
-                            f'border-left:3px solid #00BCE7;border-radius:4px;font-size:13px;'
+                            f'border-left:3px solid #5BC8F0;border-radius:4px;font-size:13px;'
                             f'color:#4a5568;font-style:italic;">🌐 English: {bt}</div>'
                         )
 
@@ -1110,7 +1110,7 @@ def main():
                         lang_label = _lang_code_to_name.get(lang_code, lang_code)
                         tags_html += (
                             f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
-                            f'font-size:11px;font-weight:500;color:#00BCE7;background:#e6f8fc;">'
+                            f'font-size:11px;font-weight:500;color:#5BC8F0;background:#e6f8fc;">'
                             f'🌐 {lang_label}</span>'
                         )
 
