@@ -310,26 +310,6 @@ def main():
         )
         return
 
-    # --- Sidebar: Fetch settings ---
-    st.sidebar.header("Fetch Settings")
-    fetch_all = st.sidebar.checkbox(
-        "Fetch all comments",
-        value=True,
-        help="Fetch every comment on each video. Uncheck to set a limit.",
-    )
-    if fetch_all:
-        max_scan = None
-    else:
-        max_scan = st.sidebar.number_input(
-            "Comments to scan per video", min_value=100, max_value=250_000,
-            value=5000, step=1000,
-        )
-    include_replies = st.sidebar.checkbox(
-        "Include replies",
-        help="Fetch replies under each top-level comment. Uses 1 additional API call "
-             "per top-level comment that has replies.",
-    )
-
     # --- Main inputs: video source ---
     input_mode = st.radio(
         "How do you want to find videos?",
@@ -370,41 +350,7 @@ def main():
         )
         max_videos = st.slider("Max videos to search", 1, 50, 10)
 
-    # --- Quota estimate (not shown for upload mode) ---
-    if input_mode == "Upload previous export":
-        _est_videos = 0
-        _search_cost = 0
-    elif input_mode == "Paste video URLs":
-        _est_videos = len(extract_video_ids(url_input)) if url_input.strip() else 1
-        _search_cost = 0
-    else:
-        _est_videos = max_videos
-        _search_cost = ((_est_videos + 49) // 50) * 100
-
-    if input_mode != "Upload previous export":
-        st.sidebar.divider()
-    if input_mode == "Upload previous export":
-        pass  # No quota estimate for uploads
-    elif fetch_all:
-        st.sidebar.markdown(
-            "### API Quota Estimate\n"
-            "⚠️ **Unknown** — fetching all comments. Quota usage depends on "
-            "video size. Each page of 50 comments = 1 unit.",
-        )
-    else:
-        _pages_per_video = (max_scan + 99) // 100
-        _comment_cost = _est_videos * _pages_per_video
-        _total_est = _search_cost + _comment_cost
-
-        _pct = min(_total_est / 10_000 * 100, 100)
-        _color = "🟢" if _pct < 25 else "🟡" if _pct < 60 else "🔴"
-        st.sidebar.markdown(
-            f"### API Quota Estimate\n"
-            f"{_color} **~{_total_est:,} units** of 10,000 daily quota ({_pct:.0f}%)\n\n"
-            f"<small>{_est_videos} video(s) &times; {_pages_per_video:,} pages/video"
-            f"{f' + {_search_cost} search' if _search_cost else ''}</small>",
-            unsafe_allow_html=True,
-        )
+    # (quota estimate moved inline with fetch settings below)
 
     # --- Recover partial fetch ---
     if "_fetch_in_progress" in st.session_state and st.session_state["_fetch_in_progress"]:
@@ -424,6 +370,50 @@ def main():
     # ===================================================================
     # PHASE 1: FETCH — hits the API, stores raw comments in session state
     # ===================================================================
+    if input_mode != "Upload previous export":
+        # Fetch settings
+        fetch_col1, fetch_col2 = st.columns(2)
+        with fetch_col1:
+            fetch_all = st.checkbox(
+                "Fetch all comments",
+                value=True,
+                help="Fetch every comment on each video. Uncheck to set a limit.",
+            )
+            if not fetch_all:
+                max_scan = st.number_input(
+                    "Comments to scan per video", min_value=100, max_value=250_000,
+                    value=5000, step=1000,
+                )
+            else:
+                max_scan = None
+        with fetch_col2:
+            include_replies = st.checkbox(
+                "Include replies",
+                help="Fetch replies under each top-level comment. Uses 1 additional API call "
+                     "per top-level comment that has replies.",
+            )
+
+    # Quota estimate (inline, only for fetch modes)
+    if input_mode != "Upload previous export":
+        if input_mode == "Paste video URLs":
+            _est_videos = len(extract_video_ids(url_input)) if url_input.strip() else 1
+            _search_cost = 0
+        else:
+            _est_videos = max_videos
+            _search_cost = ((_est_videos + 49) // 50) * 100
+
+        if fetch_all:
+            st.caption(
+                "Quota: Unknown (fetching all comments). Each page of 50 comments = 1 unit."
+            )
+        else:
+            _pages_per_video = (max_scan + 99) // 100
+            _total_est = _search_cost + _est_videos * _pages_per_video
+            _pct = min(_total_est / 10_000 * 100, 100)
+            st.caption(
+                f"Estimated quota: ~{_total_est:,} of 10,000 daily units ({_pct:.0f}%)"
+            )
+
     if input_mode == "Upload previous export":
         pass  # Upload handled above, no fetch needed
     elif st.button("Fetch Comments", type="primary"):
@@ -584,24 +574,23 @@ def main():
     top_level = [c for c in raw_comments if not c.get("is_reply")]
     replies_list = [c for c in raw_comments if c.get("is_reply")]
 
-    with st.expander(f"**Fetch Stats** — {total_raw:,} total comments", expanded=False):
-        stat_col1, stat_col2, stat_col3 = st.columns(3)
-        stat_col1.metric("Total Comments", f"{total_raw:,}")
-        stat_col2.metric("Top-Level", f"{len(top_level):,}")
-        stat_col3.metric("Replies", f"{len(replies_list):,}")
+    st.subheader("Fetch Stats")
+    stat_col1, stat_col2, stat_col3 = st.columns(3)
+    stat_col1.metric("Total Comments", f"{total_raw:,}")
+    stat_col2.metric("Top-Level", f"{len(top_level):,}")
+    stat_col3.metric("Replies", f"{len(replies_list):,}")
 
-        # Per-video breakdown
-        video_titles = sorted(set(c.get("video_title", "") for c in raw_comments))
-        if len(video_titles) > 1 or video_titles:
-            st.markdown("**By video:**")
-            for vt in video_titles:
-                v_comments = [c for c in raw_comments if c.get("video_title") == vt]
-                v_top = sum(1 for c in v_comments if not c.get("is_reply"))
-                v_replies = sum(1 for c in v_comments if c.get("is_reply"))
-                st.markdown(
-                    f"- **{vt}** — {len(v_comments):,} total "
-                    f"({v_top:,} top-level, {v_replies:,} replies)"
-                )
+    # Per-video breakdown
+    video_titles = sorted(set(c.get("video_title", "") for c in raw_comments))
+    if len(video_titles) > 1 or video_titles:
+        for vt in video_titles:
+            v_comments = [c for c in raw_comments if c.get("video_title") == vt]
+            v_top = sum(1 for c in v_comments if not c.get("is_reply"))
+            v_replies = sum(1 for c in v_comments if c.get("is_reply"))
+            st.caption(
+                f"**{vt}** — {len(v_comments):,} total "
+                f"({v_top:,} top-level, {v_replies:,} replies)"
+            )
 
     _analysis_done = "analyzed_comments" in st.session_state
     _analyze_expander = st.expander(
