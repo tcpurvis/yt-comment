@@ -330,36 +330,34 @@ def main():
              "per top-level comment that has replies.",
     )
 
-    # --- Load previous export ---
-    st.sidebar.header("Load Previous Export")
-    uploaded = st.sidebar.file_uploader(
-        "Upload a comments JSON export",
-        type=["json"],
-        help="Load a previously exported comments file to re-analyze without fetching from YouTube.",
-    )
-    if uploaded is not None:
-        # Only process the upload once (not on every rerun)
-        upload_id = f"{uploaded.name}_{uploaded.size}"
-        if st.session_state.get("_last_upload_id") != upload_id:
-            try:
-                data = json.loads(uploaded.read())
-                st.session_state["raw_comments"] = data["comments"]
-                st.session_state["search_query"] = data.get("search_query", "Imported")
-                st.session_state.pop("analyzed_comments", None)
-                st.session_state.pop("hidden_ids", None)
-                st.session_state["_last_upload_id"] = upload_id
-                st.sidebar.success(f"Loaded **{len(data['comments']):,}** comments.")
-            except Exception as e:
-                st.sidebar.error(f"Failed to load file: {e}")
-
     # --- Main inputs: video source ---
     input_mode = st.radio(
         "How do you want to find videos?",
-        ["Paste video URLs", "Search YouTube"],
+        ["Paste video URLs", "Search YouTube", "Upload previous export"],
         horizontal=True,
     )
 
-    if input_mode == "Paste video URLs":
+    if input_mode == "Upload previous export":
+        uploaded = st.file_uploader(
+            "Upload a comments JSON export",
+            type=["json"],
+            help="Load a previously exported comments file to re-analyze without fetching from YouTube.",
+        )
+        if uploaded is not None:
+            upload_id = f"{uploaded.name}_{uploaded.size}"
+            if st.session_state.get("_last_upload_id") != upload_id:
+                try:
+                    data = json.loads(uploaded.read())
+                    st.session_state["raw_comments"] = data["comments"]
+                    st.session_state["search_query"] = data.get("search_query", "Imported")
+                    st.session_state.pop("analyzed_comments", None)
+                    st.session_state.pop("hidden_ids", None)
+                    st.session_state["_last_upload_id"] = upload_id
+                    st.success(f"Loaded **{len(data['comments']):,}** comments.")
+                except Exception as e:
+                    st.error(f"Failed to load file: {e}")
+
+    elif input_mode == "Paste video URLs":
         url_input = st.text_area(
             "YouTube video URLs (one per line)",
             placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ\nhttps://youtu.be/abc123XYZab",
@@ -372,16 +370,20 @@ def main():
         )
         max_videos = st.slider("Max videos to search", 1, 50, 10)
 
-    # --- Quota estimate ---
-    if input_mode == "Paste video URLs":
+    # --- Quota estimate (not shown for upload mode) ---
+    if input_mode == "Upload previous export":
+        _est_videos = 0
+        _search_cost = 0
+    elif input_mode == "Paste video URLs":
         _est_videos = len(extract_video_ids(url_input)) if url_input.strip() else 1
         _search_cost = 0
     else:
         _est_videos = max_videos
         _search_cost = ((_est_videos + 49) // 50) * 100
 
-    st.sidebar.divider()
-    if fetch_all:
+    if input_mode != "Upload previous export":
+        st.sidebar.divider()
+    if input_mode != "Upload previous export" and fetch_all:
         st.sidebar.markdown(
             "### API Quota Estimate\n"
             "⚠️ **Unknown** — fetching all comments. Quota usage depends on "
@@ -420,7 +422,9 @@ def main():
     # ===================================================================
     # PHASE 1: FETCH — hits the API, stores raw comments in session state
     # ===================================================================
-    if st.button("Fetch Comments", type="primary"):
+    if input_mode == "Upload previous export":
+        pass  # Upload handled above, no fetch needed
+    elif st.button("Fetch Comments", type="primary"):
         from googleapiclient.errors import HttpError
 
         youtube = get_youtube_client(api_key)
@@ -630,10 +634,12 @@ def main():
             default_kw = ""
             preset_translations = {}
 
-        # Update keyword input when preset changes
+        # Update keyword input and clear translation cache when preset changes
         if st.session_state.get("_last_preset") != selected_preset:
             st.session_state["keyword_input"] = default_kw
             st.session_state["_last_preset"] = selected_preset
+            st.session_state.pop("_translation_cache_key", None)
+            st.session_state.pop("_translated_kw_map", None)
 
         keyword_input = st.text_input(
             "Filter comments by keywords (comma-separated)",
@@ -655,21 +661,27 @@ def main():
         preset_translations = {}
         selected_preset = "Custom"
 
-    st.sidebar.header("Multi-Language Search")
-    selected_langs = st.sidebar.multiselect(
+    # --- Multi-Language Search ---
+    selected_langs = st.multiselect(
         "Also search in these languages",
         options=list(SUPPORTED_LANGUAGES.keys()),
         help="Keywords will be translated and matched against cached comments. "
              "Matching comments will include a back-translation to English.",
+        key="selected_langs",
     )
     selected_lang_codes = [SUPPORTED_LANGUAGES[n] for n in selected_langs]
 
     # --- Translated keywords preview + edit ---
     translated_kw_map: dict[str, list[str]] = {}
     if selected_langs and keywords and not search_all:
-        # Use preset translations if available, otherwise auto-translate
-        cache_key = f"{','.join(keywords)}|{','.join(selected_langs)}|{selected_preset if not search_all else ''}"
+        # Cache key includes preset name so changing preset resets translations
+        cache_key = f"{selected_preset}|{','.join(keywords)}|{','.join(selected_langs)}"
         if st.session_state.get("_translation_cache_key") != cache_key:
+            # Clear old per-language text input keys so they pick up new values
+            for lang_name in SUPPORTED_LANGUAGES:
+                lc = SUPPORTED_LANGUAGES[lang_name]
+                st.session_state.pop(f"trans_{lc}", None)
+
             new_map = {}
             needs_translation = []
             for lang_name in selected_langs:
@@ -694,9 +706,11 @@ def main():
         for lang_name in selected_langs:
             lang_code = SUPPORTED_LANGUAGES[lang_name]
             current = stored_map.get(lang_code, [])
+            # Set default for text input if not already in session state
+            if f"trans_{lang_code}" not in st.session_state:
+                st.session_state[f"trans_{lang_code}"] = ", ".join(current)
             edited = st.text_input(
                 f"{lang_name} ({lang_code})",
-                value=", ".join(current),
                 key=f"trans_{lang_code}",
             )
             translated_kw_map[lang_code] = [k.strip() for k in edited.split(",") if k.strip()]
