@@ -110,7 +110,7 @@ KEYWORD_PRESETS = {
 }
 
 THEME_PALETTE = [
-    "#6366f1",  # indigo
+    "#00BCE7",  # cyan accent
     "#ec4899",  # pink
     "#f59e0b",  # amber
     "#10b981",  # emerald

@@ -298,8 +298,8 @@ def filter_comments(
 
 
 def main():
-    st.set_page_config(page_title="YouTube Comment Scraper", layout="wide")
-    st.title("💬 YouTube Comment Scraper")
+    st.set_page_config(page_title="YouTube Comment Analysis", layout="wide")
+    st.title("YouTube Comment Analysis")
     st.caption("Search · Analyze sentiment · Discover themes · Export PDF")
 
     api_key = st.secrets.get("YOUTUBE_API_KEY", "")
@@ -1070,7 +1070,7 @@ def main():
                     if c.get("is_reply"):
                         reply_marker = (
                             '<span style="display:inline-block;padding:1px 6px;border-radius:4px;'
-                            'font-size:10px;font-weight:500;color:#6366f1;background:#eef2ff;'
+                            'font-size:10px;font-weight:500;color:#00BCE7;background:#e6f8fc;'
                             'margin-right:6px;">↩ reply</span>'
                         )
 
@@ -1086,7 +1086,7 @@ def main():
                         bt = html_mod.escape(c["back_translation"])
                         translation_html = (
                             f'<div style="margin-top:8px;padding:8px 12px;background:#f0f4ff;'
-                            f'border-left:3px solid #6366f1;border-radius:4px;font-size:13px;'
+                            f'border-left:3px solid #00BCE7;border-radius:4px;font-size:13px;'
                             f'color:#4a5568;font-style:italic;">🌐 English: {bt}</div>'
                         )
 
@@ -1107,7 +1107,7 @@ def main():
                         lang_label = _lang_code_to_name.get(lang_code, lang_code)
                         tags_html += (
                             f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
-                            f'font-size:11px;font-weight:500;color:#6366f1;background:#eef2ff;">'
+                            f'font-size:11px;font-weight:500;color:#00BCE7;background:#e6f8fc;">'
                             f'🌐 {lang_label}</span>'
                         )
 
