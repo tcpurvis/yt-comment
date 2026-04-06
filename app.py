@@ -91,7 +91,14 @@ def main():
     # --- Sidebar ---
     st.sidebar.header("Settings")
     max_videos = st.sidebar.slider("Max videos to search", 1, 50, 10)
-    max_comments = st.sidebar.slider("Max comments per video", 10, 500, 100)
+    max_scan = st.sidebar.slider(
+        "Comments to scan per video", 10, 1000, 200,
+        help="How deep to search into each video's comments for keyword matches.",
+    )
+    max_matches = st.sidebar.slider(
+        "Max matched comments to return", 10, 500, 100,
+        help="Stop collecting once this many keyword-matched comments are found across all videos.",
+    )
     max_themes = st.sidebar.slider("Max themes", 2, 12, 6)
 
     st.sidebar.header("Multi-Language Search")
@@ -155,7 +162,9 @@ def main():
 
             progress = st.progress(0, text=f"Fetching comments ({lang_label})...")
             for i, video in enumerate(videos):
-                comments = fetch_comments(youtube, video["video_id"], max_comments)
+                if len(all_comments) >= max_matches:
+                    break
+                comments = fetch_comments(youtube, video["video_id"], max_scan)
                 for c in comments:
                     c["video_title"] = video["title"]
                 filtered = filter_comments(comments, plan["keywords"])
@@ -163,7 +172,8 @@ def main():
                 if plan["lang"]:
                     filtered = add_back_translations(filtered, plan["lang"])
 
-                all_comments.extend(filtered)
+                remaining = max_matches - len(all_comments)
+                all_comments.extend(filtered[:remaining])
                 progress.progress((i + 1) / len(videos))
             progress.empty()
 
@@ -178,7 +188,10 @@ def main():
         with st.spinner("Discovering themes..."):
             all_comments = cluster_into_themes(all_comments, max_themes=max_themes)
 
-        st.success(f"Analyzed **{len(all_comments)}** comments across **{total_plans}** language(s).")
+        st.success(
+            f"Analyzed **{len(all_comments)}** matched comments "
+            f"across **{total_plans}** language(s)."
+        )
 
         # --- Build report ---
         html_report = build_html_report(all_comments, search_query, keywords)
