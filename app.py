@@ -178,6 +178,7 @@ def fetch_comments(
         videoId=video_id,
         maxResults=page_size,
         textFormat="plainText",
+        order="time",
     )
     while request:
         if max_comments is not None and len(comments) >= max_comments:
