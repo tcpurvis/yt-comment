@@ -1,6 +1,8 @@
 import html
 from datetime import datetime
 
+from fpdf import FPDF
+
 from config import SENTIMENT_COLORS, THEME_PALETTE
 from analysis import get_theme_summary, get_sentiment_counts
 
@@ -230,3 +232,225 @@ def build_html_report(
   </div>
 </body>
 </html>"""
+
+
+# ---------------------------------------------------------------------------
+# PDF report via fpdf2
+# ---------------------------------------------------------------------------
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _safe(text: str) -> str:
+    """Sanitise text for fpdf (replace chars it can't encode in latin-1)."""
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+class _ReportPDF(FPDF):
+    def header(self):
+        self.set_font("Helvetica", "B", 10)
+        self.set_text_color(160, 160, 160)
+        self.cell(0, 6, "YouTube Comment Analysis", align="R", new_x="LMARGIN", new_y="NEXT")
+        self.ln(2)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Helvetica", "", 8)
+        self.set_text_color(160, 160, 160)
+        self.cell(0, 10, f"Page {self.page_no()}/{{nb}}", align="C")
+
+
+def build_pdf_report(
+    comments: list[dict], search_query: str, keywords: list[str]
+) -> bytes:
+    """Build a styled PDF report and return the bytes."""
+    themes = get_theme_summary(comments)
+    sentiment_counts = get_sentiment_counts(comments)
+    total = len(comments)
+    now = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    kw_display = ", ".join(keywords) if keywords else "None"
+
+    pdf = _ReportPDF()
+    pdf.alias_nb_pages()
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.add_page()
+
+    # ---- Title ----
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.set_text_color(26, 26, 26)
+    pdf.cell(0, 12, "YouTube Comment Analysis", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(107, 114, 128)
+    pdf.cell(0, 6, f"Generated {now}", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(8)
+
+    # ---- Summary box ----
+    r, g, b = _hex_to_rgb("#6366f1")
+    pdf.set_fill_color(r, g, b)
+    pdf.set_text_color(255, 255, 255)
+    box_y = pdf.get_y()
+    pdf.rect(10, box_y, pdf.w - 20, 28, "F")
+
+    pdf.set_xy(14, box_y + 3)
+    pdf.set_font("Helvetica", "", 7)
+    pdf.cell(42, 4, "SEARCH QUERY", new_x="END")
+    pdf.cell(42, 4, "KEYWORDS", new_x="END")
+    pdf.cell(42, 4, "TOTAL COMMENTS", new_x="END")
+    pdf.cell(42, 4, "THEMES FOUND", new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_x(14)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(42, 8, _safe(search_query[:30]), new_x="END")
+    pdf.cell(42, 8, _safe(kw_display[:30]), new_x="END")
+    pdf.cell(42, 8, str(total), new_x="END")
+    pdf.cell(42, 8, str(len(themes)), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.ln(10)
+
+    # ---- Overall sentiment bar ----
+    pdf.set_text_color(26, 26, 26)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "Overall Sentiment", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    _draw_sentiment_bar(pdf, sentiment_counts, total)
+    pdf.ln(8)
+
+    # ---- Theme sections ----
+    for i, (theme_name, theme_comments) in enumerate(themes.items()):
+        color = THEME_PALETTE[i % len(THEME_PALETTE)]
+
+        # Theme heading
+        if pdf.get_y() > pdf.h - 50:
+            pdf.add_page()
+        r, g, b = _hex_to_rgb(color)
+        pdf.set_fill_color(r, g, b)
+        pdf.rect(10, pdf.get_y(), 4, 8, "F")
+        pdf.set_x(16)
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_text_color(26, 26, 26)
+        pdf.cell(0, 8, f"{_safe(theme_name)}  ({len(theme_comments)} comments)",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1)
+
+        # Theme sentiment mini-bar
+        t_counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
+        for c in theme_comments:
+            t_counts[c["sentiment_label"]] += 1
+        _draw_sentiment_bar(pdf, t_counts, len(theme_comments))
+        pdf.ln(4)
+
+        # Comments
+        for c in theme_comments:
+            _draw_comment(pdf, c)
+
+        pdf.ln(6)
+
+    # ---- Footer text ----
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(160, 160, 160)
+    pdf.cell(0, 6, "Sentiment by VADER  |  Themes by TF-IDF + KMeans",
+             align="C", new_x="LMARGIN", new_y="NEXT")
+
+    return pdf.output()
+
+
+def _draw_sentiment_bar(pdf: FPDF, counts: dict, total: int):
+    if total == 0:
+        return
+    bar_w = pdf.w - 20
+    bar_h = 7
+    x0 = 10
+    y0 = pdf.get_y()
+
+    for label in ["Positive", "Neutral", "Negative"]:
+        count = counts.get(label, 0)
+        pct = count / total
+        seg_w = bar_w * pct
+        if seg_w < 1:
+            continue
+        r, g, b = _hex_to_rgb(SENTIMENT_COLORS[label])
+        pdf.set_fill_color(r, g, b)
+        pdf.rect(x0, y0, seg_w, bar_h, "F")
+        if seg_w > 20:
+            pdf.set_xy(x0, y0)
+            pdf.set_font("Helvetica", "B", 7)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(seg_w, bar_h, f"{count} ({pct:.0%})", align="C")
+        x0 += seg_w
+
+    pdf.set_y(y0 + bar_h)
+
+
+def _draw_comment(pdf: FPDF, c: dict):
+    """Draw a single comment card in the PDF."""
+    if pdf.get_y() > pdf.h - 40:
+        pdf.add_page()
+
+    x_start = 14
+    y_start = pdf.get_y()
+
+    # Avatar circle
+    avatar_color = _avatar_color(c["author"])
+    r, g, b = _hex_to_rgb(avatar_color)
+    pdf.set_fill_color(r, g, b)
+    cx, cy = x_start + 4, y_start + 4
+    pdf.ellipse(cx - 4, cy - 4, 8, 8, "F")
+    initials = _initials(c["author"])
+    pdf.set_xy(cx - 4, cy - 2.5)
+    pdf.set_font("Helvetica", "B", 6)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(8, 5, _safe(initials), align="C")
+
+    # Author + date + sentiment
+    pdf.set_xy(x_start + 11, y_start)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(3, 3, 3)
+    pdf.cell(0, 5, _safe(c["author"]), new_x="END")
+
+    pdf.set_font("Helvetica", "", 7)
+    pdf.set_text_color(144, 144, 144)
+    date_str = _format_date(c["date"])
+    pdf.cell(0, 5, f"   {date_str}", new_x="END")
+
+    # Sentiment badge
+    label = c["sentiment_label"]
+    badge_text = {"Positive": "(+) Positive", "Negative": "(-) Negative", "Neutral": "(~) Neutral"}[label]
+    sr, sg, sb = _hex_to_rgb(SENTIMENT_COLORS[label])
+    pdf.set_text_color(sr, sg, sb)
+    pdf.set_font("Helvetica", "B", 7)
+    pdf.cell(0, 5, f"   {badge_text}", new_x="LMARGIN", new_y="NEXT")
+
+    # Comment text
+    pdf.set_x(x_start + 11)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(3, 3, 3)
+    comment_text = _safe(c["comment"])
+    pdf.multi_cell(pdf.w - x_start - 22, 4.5, comment_text, new_x="LMARGIN", new_y="NEXT")
+
+    # Back-translation
+    if c.get("back_translation") and c.get("original_language"):
+        pdf.set_x(x_start + 11)
+        pdf.set_font("Helvetica", "I", 8)
+        pdf.set_text_color(99, 102, 241)
+        bt = _safe(c["back_translation"])
+        pdf.multi_cell(pdf.w - x_start - 22, 4, f"EN: {bt}", new_x="LMARGIN", new_y="NEXT")
+
+    # Likes / replies
+    meta_parts = []
+    if c.get("likes", 0) > 0:
+        meta_parts.append(f"Likes: {c['likes']}")
+    if c.get("replies", 0) > 0:
+        meta_parts.append(f"Replies: {c['replies']}")
+    if meta_parts:
+        pdf.set_x(x_start + 11)
+        pdf.set_font("Helvetica", "", 7)
+        pdf.set_text_color(96, 96, 96)
+        pdf.cell(0, 4, "  |  ".join(meta_parts), new_x="LMARGIN", new_y="NEXT")
+
+    # Separator line
+    pdf.ln(2)
+    pdf.set_draw_color(240, 240, 240)
+    pdf.line(x_start + 11, pdf.get_y(), pdf.w - 10, pdf.get_y())
+    pdf.ln(3)

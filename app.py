@@ -1,13 +1,11 @@
 import streamlit as st
 import streamlit.components.v1 as components
 from googleapiclient.discovery import build
-from xhtml2pdf import pisa
-import io
 
 from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES
 from analysis import add_sentiment, cluster_into_themes
 from translate import translate_keywords, add_back_translations
-from report import build_html_report
+from report import build_html_report, build_pdf_report
 
 
 def get_youtube_client(api_key: str):
@@ -75,13 +73,6 @@ def filter_comments(comments: list[dict], keywords: list[str]) -> list[dict]:
         for c in comments
         if any(kw.lower() in c["comment"].lower() for kw in keywords)
     ]
-
-
-def html_to_pdf(html_content: str) -> bytes:
-    """Convert an HTML string to PDF bytes."""
-    buf = io.BytesIO()
-    pisa.CreatePDF(io.StringIO(html_content), dest=buf)
-    return buf.getvalue()
 
 
 def main():
@@ -192,25 +183,25 @@ def main():
         # --- Build report ---
         html_report = build_html_report(all_comments, search_query, keywords)
 
+        # Build PDF while we have the data
+        pdf_bytes = build_pdf_report(all_comments, search_query, keywords)
+
         # Store in session state so it persists across reruns
         st.session_state["report_html"] = html_report
-        st.session_state["report_comments"] = all_comments
+        st.session_state["report_pdf"] = pdf_bytes
 
     # --- Display report if available ---
     if "report_html" not in st.session_state:
         return
 
-    html_report = st.session_state["report_html"]
-
     st.divider()
     st.subheader("Report Preview")
-    components.html(html_report, height=800, scrolling=True)
+    components.html(st.session_state["report_html"], height=800, scrolling=True)
 
     # --- PDF download ---
-    pdf_bytes = html_to_pdf(html_report)
     st.download_button(
-        label="⬇️  Download PDF Report",
-        data=pdf_bytes,
+        label="Download PDF Report",
+        data=st.session_state["report_pdf"],
         file_name="youtube_comment_report.pdf",
         mime="application/pdf",
         type="primary",
