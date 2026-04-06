@@ -441,7 +441,7 @@ def build_pdf_report(
         pdf.ln(2)
         pdf.set_font("Lato", "B", 13)
         pdf.set_text_color(26, 26, 26)
-        pdf.cell(0, 8, "AI Theme Summary", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 8, "Summary", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
         pdf.set_text_color(26, 26, 26)
         _render_markdown_text(pdf, ai_summary)
