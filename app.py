@@ -313,7 +313,7 @@ def main():
     # --- Main inputs: video source ---
     input_mode = st.radio(
         "How do you want to find videos?",
-        ["Paste video URLs", "Search YouTube", "Upload previous export"],
+        ["Paste video URLs", "Upload previous export"],
         horizontal=True,
     )
 
@@ -330,10 +330,25 @@ def main():
                     data = json.loads(uploaded.read())
                     st.session_state["raw_comments"] = data["comments"]
                     st.session_state["search_query"] = data.get("search_query", "Imported")
-                    st.session_state.pop("analyzed_comments", None)
-                    st.session_state.pop("hidden_ids", None)
                     st.session_state["_last_upload_id"] = upload_id
-                    st.success(f"Loaded **{len(data['comments']):,}** comments.")
+
+                    # Restore analysis state if saved in the export
+                    if "analyzed_comments" in data:
+                        st.session_state["analyzed_comments"] = data["analyzed_comments"]
+                        st.session_state["hidden_ids"] = set(data.get("hidden_ids", []))
+                        st.session_state["keywords"] = data.get("keywords", [])
+                        if data.get("preset"):
+                            st.session_state["keyword_preset"] = data["preset"]
+                        if data.get("ai_summary"):
+                            st.session_state["ai_summary"] = data["ai_summary"]
+                        st.success(
+                            f"Restored session: **{len(data['comments']):,}** raw comments, "
+                            f"**{len(data['analyzed_comments']):,}** analyzed."
+                        )
+                    else:
+                        st.session_state.pop("analyzed_comments", None)
+                        st.session_state.pop("hidden_ids", None)
+                        st.success(f"Loaded **{len(data['comments']):,}** comments.")
                 except Exception as e:
                     st.error(f"Failed to load file: {e}")
 
@@ -343,12 +358,6 @@ def main():
             placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ\nhttps://youtu.be/abc123XYZab",
             height=120,
         )
-    else:
-        search_query = st.text_input(
-            "Search YouTube for videos",
-            placeholder="e.g. python tutorial",
-        )
-        max_videos = st.slider("Max videos to search", 1, 50, 10)
 
     # (quota estimate moved inline with fetch settings below)
 
@@ -395,12 +404,7 @@ def main():
 
     # Quota estimate (inline, only for fetch modes)
     if input_mode != "Upload previous export":
-        if input_mode == "Paste video URLs":
-            _est_videos = len(extract_video_ids(url_input)) if url_input.strip() else 1
-            _search_cost = 0
-        else:
-            _est_videos = max_videos
-            _search_cost = ((_est_videos + 49) // 50) * 100
+        _est_videos = len(extract_video_ids(url_input)) if url_input.strip() else 1
 
         if fetch_all:
             st.caption(
@@ -408,7 +412,7 @@ def main():
             )
         else:
             _pages_per_video = (max_scan + 99) // 100
-            _total_est = _search_cost + _est_videos * _pages_per_video
+            _total_est = _est_videos * _pages_per_video
             _pct = min(_total_est / 10_000 * 100, 100)
             st.caption(
                 f"Estimated quota: ~{_total_est:,} of 10,000 daily units ({_pct:.0f}%)"
@@ -433,16 +437,6 @@ def main():
                     st.error("Could not find any of the provided video IDs.")
                     return
                 sq = ", ".join(v["title"] for v in videos)
-            else:
-                if not search_query:
-                    st.warning("Please enter a search query.")
-                    return
-                with st.spinner("Searching videos..."):
-                    videos = search_videos(youtube, search_query, max_videos)
-                if not videos:
-                    st.warning("No videos found.")
-                    return
-                sq = search_query
         except HttpError as e:
             reason = e.error_details[0]["reason"] if e.error_details else str(e)
             if e.resp.status == 403:
@@ -604,16 +598,28 @@ def main():
         _vtitles_j = sorted(set(c.get("video_title", "") for c in raw_comments if c.get("video_title")))
         _tslug_j = re.sub(r"[^\w\s-]", "", _vtitles_j[0] if len(_vtitles_j) == 1 else "multiple_videos")
         _tslug_j = re.sub(r"\s+", "_", _tslug_j.strip())[:50]
-        _exp_data = json.dumps(
-            {"search_query": sq, "comments": raw_comments}, ensure_ascii=False
-        ).encode("utf-8")
+
+        # Build export with session state
+        _export_payload: dict = {
+            "search_query": sq,
+            "comments": raw_comments,
+        }
+        # Include analysis state if available
+        if "analyzed_comments" in st.session_state:
+            _export_payload["analyzed_comments"] = st.session_state["analyzed_comments"]
+            _export_payload["hidden_ids"] = list(st.session_state.get("hidden_ids", set()))
+            _export_payload["keywords"] = st.session_state.get("keywords", [])
+            _export_payload["preset"] = st.session_state.get("keyword_preset", "Custom")
+            _export_payload["ai_summary"] = st.session_state.get("ai_summary", "")
+
+        _exp_data = json.dumps(_export_payload, ensure_ascii=False).encode("utf-8")
         st.download_button(
-            label="Export Raw Comments (JSON)",
+            label="Save Project (JSON)",
             data=_exp_data,
             file_name=f"{_tslug_j}_{_exp_ts_j}.json",
             mime="application/json",
         )
-        st.caption("Download comments as JSON to avoid another API pull when revisiting this analysis later.")
+        st.caption("Save your progress to pick up where you left off without another API pull.")
 
     _analysis_done = "analyzed_comments" in st.session_state
     _analyze_expander = st.expander(
@@ -857,10 +863,10 @@ def main():
         st.subheader("Language Detection")
         lang_parts = [f"{name}: {count:,}" for name, count in
                       sorted(lang_counts.items(), key=lambda x: -x[1])]
-        st.caption(f"**Languages detected:** {' · '.join(lang_parts)}")
+        st.markdown(f"**Languages detected:** {' · '.join(lang_parts)}")
 
         if non_english:
-            st.caption(
+            st.markdown(
                 f"**{len(non_english):,}** non-English comments without translations."
             )
             if st.button("Translate All", key="bulk_translate", type="primary"):
@@ -1049,7 +1055,16 @@ def main():
                 summary_stale = True
 
             with st.expander("**AI Theme Summary**", expanded=True):
-                st.markdown(ai_summary)
+                edited_summary = st.text_area(
+                    "Edit summary before exporting",
+                    value=ai_summary,
+                    height=200,
+                    key="ai_summary_edit",
+                    label_visibility="collapsed",
+                )
+                if edited_summary != ai_summary:
+                    st.session_state["ai_summary"] = edited_summary
+                    ai_summary = edited_summary
                 if summary_stale:
                     st.warning("Comments have changed since this summary was generated. "
                                "Click **Generate AI Summary** above to refresh.")
