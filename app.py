@@ -700,18 +700,97 @@ def main():
     st.subheader("Report Preview")
     st.caption("Un-check any comment to exclude it from the report and PDF.")
 
-    # --- Video filter ---
-    all_video_titles = sorted(set(c.get("video_title", "") for c in all_comments))
-    if len(all_video_titles) > 1:
-        selected_videos = st.multiselect(
-            "Filter by video",
-            options=all_video_titles,
-            default=all_video_titles,
-            help="Show only comments from the selected videos.",
+    # --- Filters & Sort ---
+    with st.expander("**Filter & Sort**", expanded=False):
+        filter_col1, filter_col2 = st.columns(2)
+
+        # Video filter
+        all_video_titles = sorted(set(c.get("video_title", "") for c in all_comments))
+        if len(all_video_titles) > 1:
+            with filter_col1:
+                selected_videos = st.multiselect(
+                    "Filter by video",
+                    options=all_video_titles,
+                    default=all_video_titles,
+                )
+        else:
+            selected_videos = all_video_titles
+
+        # Sentiment filter
+        with filter_col2:
+            selected_sentiments = st.multiselect(
+                "Filter by sentiment",
+                options=["Positive", "Neutral", "Negative"],
+                default=["Positive", "Neutral", "Negative"],
+            )
+
+        filter_col3, filter_col4 = st.columns(2)
+
+        # Text search
+        with filter_col3:
+            text_search = st.text_input(
+                "Search within comments",
+                placeholder="e.g. auto-generated",
+            )
+
+        # Author filter
+        with filter_col4:
+            author_search = st.text_input(
+                "Filter by author",
+                placeholder="e.g. @username",
+            )
+
+        filter_col5, filter_col6 = st.columns(2)
+
+        # Min likes
+        with filter_col5:
+            min_likes = st.number_input("Min likes", min_value=0, value=0, step=1)
+
+        # Sort
+        with filter_col6:
+            sort_options = {
+                "Date (newest)": ("date", True),
+                "Date (oldest)": ("date", False),
+                "Likes (most)": ("likes", True),
+                "Likes (fewest)": ("likes", False),
+                "Author (A-Z)": ("author", False),
+            }
+            sort_choice = st.selectbox("Sort by", options=list(sort_options.keys()))
+
+        # Reply filter
+        show_replies = st.radio(
+            "Comment type",
+            ["All", "Top-level only", "Replies only"],
+            horizontal=True,
         )
-        display_comments = [c for c in all_comments if c.get("video_title") in selected_videos]
-    else:
-        display_comments = all_comments
+
+    # Apply filters
+    display_comments = all_comments
+
+    if len(all_video_titles) > 1:
+        display_comments = [c for c in display_comments if c.get("video_title") in selected_videos]
+
+    display_comments = [c for c in display_comments if c["sentiment_label"] in selected_sentiments]
+
+    if text_search:
+        text_search_lower = text_search.lower()
+        display_comments = [c for c in display_comments if text_search_lower in c["comment"].lower()]
+
+    if author_search:
+        author_search_lower = author_search.lower()
+        display_comments = [c for c in display_comments if author_search_lower in c["author"].lower()]
+
+    if min_likes > 0:
+        display_comments = [c for c in display_comments if c.get("likes", 0) >= min_likes]
+
+    if show_replies == "Top-level only":
+        display_comments = [c for c in display_comments if not c.get("is_reply")]
+    elif show_replies == "Replies only":
+        display_comments = [c for c in display_comments if c.get("is_reply")]
+
+    # Apply sort
+    sort_key, sort_reverse = sort_options[sort_choice]
+    display_comments = sorted(display_comments, key=lambda c: c.get(sort_key, ""), reverse=sort_reverse)
 
     sentiment_counts = get_sentiment_counts(display_comments)
     total = len(display_comments)
@@ -737,12 +816,14 @@ def main():
             f'margin:8px 0 16px 0;">{_bar_html}</div>'
         )
 
-    # Group comments by sentiment
+    # Group comments by sentiment (preserving sort within each group)
     sentiment_groups = {}
     for label in ["Positive", "Neutral", "Negative"]:
         group = [c for c in display_comments if c["sentiment_label"] == label]
         if group:
             sentiment_groups[label] = group
+
+    st.caption(f"Showing **{total:,}** comments")
 
     # Render sentiment-grouped comment cards with checkboxes
     visible_comments = []
