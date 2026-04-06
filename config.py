@@ -57,8 +57,7 @@ KEYWORD_PRESETS = {
     "Dubbing & Voice": {
         "keywords": ["dub", "dubbed", "dubbing", "voice", "voice actor",
                       "voice acting", "voice over", "voiceover",
-                      "audio track", "original audio", "english dub",
-                      "japanese dub", "voice cast"],
+                      "audio track", "original audio", "voice cast"],
         "translations": {
             "es": ["doblaje", "doblado", "doblar", "voz", "actor de voz",
                     "actriz de voz", "voces", "pista de audio",
