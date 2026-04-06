@@ -718,7 +718,7 @@ def main():
         # Step 1: Filter
         status.update(label="Step 1/4 — Filtering comments...")
         if search_all:
-            matched = [dict(c) for c in raw_comments]
+            matched = [dict(c, matched_language="all") for c in raw_comments]
         else:
             # Build compiled regex patterns for each keyword set
             all_kw_sets: list[tuple[re.Pattern, str | None]] = []
@@ -745,6 +745,7 @@ def main():
                         continue
                     seen.add(idx)
                     copy = dict(c)
+                    copy["matched_language"] = plan_lang or "en"
                     if plan_lang:
                         copy["_needs_bt"] = plan_lang
                     matched.append(copy)
@@ -807,8 +808,8 @@ def main():
         st.session_state["keywords"] = keywords
         st.session_state.pop("ai_summary", None)
         # Reset filter/sort state for fresh results
-        for k in ["fs_videos", "fs_sentiment", "fs_text_search", "fs_author_search",
-                   "fs_min_likes", "fs_sort", "fs_reply_type"]:
+        for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
+                   "fs_author_search", "fs_min_likes", "fs_sort", "fs_reply_type"]:
             st.session_state.pop(k, None)
         st.success(f"**{len(analyzed):,}** comments match your filters.")
 
@@ -828,10 +829,19 @@ def main():
     # --- Filters & Sort ---
     # Initialize filter defaults in session state on first analysis
     all_video_titles = sorted(set(c.get("video_title", "") for c in all_comments))
+    # Build language label lookup: code -> display name
+    _lang_code_to_name = {v: k for k, v in SUPPORTED_LANGUAGES.items()}
+    _lang_code_to_name["en"] = "English"
+    _lang_code_to_name["all"] = "All (unfiltered)"
+    all_languages = sorted(set(c.get("matched_language", "en") for c in all_comments))
+    all_language_labels = [_lang_code_to_name.get(lc, lc) for lc in all_languages]
+
     if "fs_videos" not in st.session_state:
         st.session_state["fs_videos"] = all_video_titles
     if "fs_sentiment" not in st.session_state:
         st.session_state["fs_sentiment"] = ["Positive", "Neutral", "Negative"]
+    if "fs_language" not in st.session_state:
+        st.session_state["fs_language"] = all_language_labels
 
     with st.expander("**Filter & Sort**", expanded=False):
         filter_col1, filter_col2 = st.columns(2)
@@ -854,6 +864,18 @@ def main():
                 options=["Positive", "Neutral", "Negative"],
                 key="fs_sentiment",
             )
+
+        # Language filter
+        if len(all_languages) > 1:
+            filter_col_lang1, filter_col_lang2 = st.columns(2)
+            with filter_col_lang1:
+                selected_language_labels = st.multiselect(
+                    "Filter by matched language",
+                    options=all_language_labels,
+                    key="fs_language",
+                )
+        else:
+            selected_language_labels = all_language_labels
 
         filter_col3, filter_col4 = st.columns(2)
 
@@ -905,6 +927,12 @@ def main():
         display_comments = [c for c in display_comments if c.get("video_title") in selected_videos]
 
     display_comments = [c for c in display_comments if c["sentiment_label"] in selected_sentiments]
+
+    # Language filter
+    if len(all_languages) > 1:
+        _name_to_code = {v: k for k, v in _lang_code_to_name.items()}
+        selected_lang_filter_codes = {_name_to_code.get(lbl, lbl) for lbl in selected_language_labels}
+        display_comments = [c for c in display_comments if c.get("matched_language", "en") in selected_lang_filter_codes]
 
     if text_search:
         text_search_lower = text_search.lower()
@@ -1039,15 +1067,26 @@ def main():
                     comment_text = html_mod.escape(c["comment"])
                     author_text = html_mod.escape(c["author"])
 
-                    video_tag_html = ""
+                    tags_html = ""
                     if len(all_video_titles) > 1 and c.get("video_title"):
                         vt = html_mod.escape(c["video_title"])
-                        video_tag_html = (
-                            f'<div style="margin-bottom:6px;">'
+                        tags_html += (
                             f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
-                            f'font-size:11px;font-weight:500;color:#4a5568;background:#f3f4f6;">'
-                            f'🎬 {vt}</span></div>'
+                            f'font-size:11px;font-weight:500;color:#4a5568;background:#f3f4f6;'
+                            f'margin-right:6px;">🎬 {vt}</span>'
                         )
+
+                    lang_code = c.get("matched_language", "en")
+                    if lang_code not in ("en", "all"):
+                        lang_label = _lang_code_to_name.get(lang_code, lang_code)
+                        tags_html += (
+                            f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
+                            f'font-size:11px;font-weight:500;color:#6366f1;background:#eef2ff;">'
+                            f'🌐 {lang_label}</span>'
+                        )
+
+                    if tags_html:
+                        tags_html = f'<div style="margin-bottom:6px;">{tags_html}</div>'
 
                     st.html(f"""
                     <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f0f0f0;opacity:{opacity};">
@@ -1057,7 +1096,7 @@ def main():
                         {initials}
                       </div>
                       <div style="flex:1;min-width:0;">
-                        {video_tag_html}
+                        {tags_html}
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                           {reply_marker}
                           <span style="font-weight:600;font-size:13px;color:#030303;">{author_text}</span>
