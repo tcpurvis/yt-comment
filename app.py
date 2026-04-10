@@ -1072,6 +1072,9 @@ def main():
     multi_analyses = st.session_state.get("multi_analyses")
     hidden_ids = st.session_state.get("hidden_ids", set())
     kws = st.session_state.get("keywords", [])
+    if "_bulk_selected" not in st.session_state:
+        st.session_state["_bulk_selected"] = set()
+    bulk_selected = st.session_state["_bulk_selected"]
 
     # Tab selector for multi-analysis
     _active_tab = 0
@@ -1477,11 +1480,6 @@ def main():
             sentiment_groups[label] = group
 
     st.caption(f"Showing **{total:,}** comments")
-
-    # Initialize bulk selection set
-    if "_bulk_selected" not in st.session_state:
-        st.session_state["_bulk_selected"] = set()
-    bulk_selected = st.session_state["_bulk_selected"]
 
     # --- Language Detection (sidebar, uses visible comments) ---
     visible_for_lang = [c for c in all_comments if c["_id"] not in hidden_ids]
