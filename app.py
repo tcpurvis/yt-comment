@@ -1815,29 +1815,8 @@ def main():
                                    f'border-left:2px solid #00BCE7;border-radius:3px;font-size:12px;'
                                    f'color:#4a5568;font-style:italic;">🌐 {bt}</div>')
 
-                    st.html(f"""
-                    <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid #f0f0f0;opacity:{opacity};align-items:flex-start;">
-                      <div style="flex-shrink:0;width:32px;height:32px;border-radius:50%;
-                                  background:{avatar_bg};display:flex;align-items:center;
-                                  justify-content:center;color:#fff;font-weight:700;font-size:12px;">
-                        {initials}
-                      </div>
-                      <div style="flex:1;min-width:0;">
-                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                          {reply_tag}
-                          <span style="font-weight:600;font-size:12px;color:#030303;">{author_text}</span>
-                          <span style="font-size:11px;color:#909090;">{date_str}</span>
-                          {sentiment_html}{lang_tag}
-                        </div>
-                        <div style="margin-top:3px;font-size:13px;color:#030303;line-height:1.4;">{comment_text}</div>
-                        {tr_html}
-                        {f'<div style="margin-top:2px;">{meta}</div>' if meta else ''}
-                      </div>
-                    </div>
-                    """)
-
-                    # Compact controls: checkbox + skip + lang on one line
-                    _c1, _c2, _c3 = st.columns([0.05, 0.10, 0.85])
+                    # Single row: checkbox | comment card | skip | lang
+                    _c1, _c2, _c3, _c4 = st.columns([0.03, 0.77, 0.07, 0.13], vertical_alignment="top")
                     with _c1:
                         sel = st.checkbox("s", value=(cid in _bsel), key=f"sel_{cid}", label_visibility="collapsed")
                         if sel:
@@ -1845,6 +1824,27 @@ def main():
                         else:
                             _bsel.discard(cid)
                     with _c2:
+                        st.html(f"""
+                        <div style="display:flex;gap:8px;opacity:{opacity};align-items:flex-start;">
+                          <div style="flex-shrink:0;width:28px;height:28px;border-radius:50%;
+                                      background:{avatar_bg};display:flex;align-items:center;
+                                      justify-content:center;color:#fff;font-weight:700;font-size:11px;">
+                            {initials}
+                          </div>
+                          <div style="flex:1;min-width:0;">
+                            <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+                              {reply_tag}
+                              <span style="font-weight:600;font-size:12px;color:#030303;">{author_text}</span>
+                              <span style="font-size:10px;color:#909090;">{date_str}</span>
+                              {sentiment_html}{lang_tag}
+                              {f'<span style="color:#909090;font-size:10px;">👍{c["likes"]}</span>' if c.get("likes", 0) > 0 else ''}
+                            </div>
+                            <div style="margin-top:2px;font-size:13px;color:#030303;line-height:1.3;">{comment_text}</div>
+                            {tr_html}
+                          </div>
+                        </div>
+                        """)
+                    with _c3:
                         if not is_skipped:
                             if st.button("Skip", key=f"skip_{cid}"):
                                 _hidden.add(cid)
@@ -1853,7 +1853,7 @@ def main():
                             if st.button("Incl", key=f"unskip_{cid}"):
                                 _hidden.discard(cid)
                                 _clear_selections()
-                    with _c3:
+                    with _c4:
                         _cur_lc = c.get("matched_language", "en")
                         _cur_disp = LANGUAGE_NAMES.get(_cur_lc, _cur_lc)
                         _lk = f"lang_{cid}"
