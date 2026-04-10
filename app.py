@@ -1286,34 +1286,40 @@ def main():
 
                 st.caption(f"Showing **{len(_filtered_tab):,}** comments")
 
-                _t_groups = {}
-                for _lbl in ["Positive", "Neutral", "Negative"]:
-                    _grp = [c for c in _filtered_tab if c["sentiment_label"] == _lbl]
-                    if _grp:
-                        _t_groups[_lbl] = _grp
+                # Comment cards in fragment to prevent full rerun on checkbox
+                @st.fragment
+                def _render_tab_cards(_comments, _tidx):
+                    _hidden_f = st.session_state.get("hidden_ids", set())
+                    _bsel_f = st.session_state.get("_bulk_selected", set())
 
-                for _lbl, _grp_c in _t_groups.items():
-                    _emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[_lbl]
-                    with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=False):
-                        for c in _grp_c:
-                            cid = c["_id"]
-                            _is_skipped = cid in hidden_ids
+                    _groups = {}
+                    for _lbl in ["Positive", "Neutral", "Negative"]:
+                        _grp = [c for c in _comments if c["sentiment_label"] == _lbl]
+                        if _grp:
+                            _groups[_lbl] = _grp
 
-                            _c_sel, _c_card, _c_act = st.columns([0.03, 0.87, 0.10], vertical_alignment="top")
-                            with _c_sel:
-                                _sel = st.checkbox("sel", value=(cid in bulk_selected),
-                                                   key=f"sel_{tab_idx}_{cid}", label_visibility="collapsed")
-                                if _sel:
-                                    bulk_selected.add(cid)
-                                else:
-                                    bulk_selected.discard(cid)
+                    for _lbl, _grp_c in _groups.items():
+                        _emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[_lbl]
+                        with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=False):
+                            for c in _grp_c:
+                                cid = c["_id"]
+                                _is_skipped = cid in _hidden_f
 
-                            with _c_card:
-                                _av_bg = _avatar_color(c["author"])
-                                _ini = _initials(c["author"])
-                                _ds = _format_date(c["date"])
-                                _sb = _sentiment_badge(c["sentiment_label"])
-                                _op = "0.35" if _is_skipped else "1"
+                                _c_sel, _c_card, _c_act = st.columns([0.03, 0.87, 0.10], vertical_alignment="top")
+                                with _c_sel:
+                                    _sel = st.checkbox("sel", value=(cid in _bsel_f),
+                                                       key=f"sel_{_tidx}_{cid}", label_visibility="collapsed")
+                                    if _sel:
+                                        _bsel_f.add(cid)
+                                    else:
+                                        _bsel_f.discard(cid)
+
+                                with _c_card:
+                                    _av_bg = _avatar_color(c["author"])
+                                    _ini = _initials(c["author"])
+                                    _ds = _format_date(c["date"])
+                                    _sb = _sentiment_badge(c["sentiment_label"])
+                                    _op = "0.35" if _is_skipped else "1"
                                 _ct = html_mod.escape(c["comment"])
                                 _at = html_mod.escape(c["author"])
 
@@ -1355,28 +1361,30 @@ def main():
                                 </div>
                                 """)
 
-                            with _c_act:
-                                if not _is_skipped:
-                                    if st.button("Skip", key=f"skip_{tab_idx}_{cid}"):
-                                        hidden_ids.add(cid)
-                                        st.rerun()
-                                else:
-                                    if st.button("Include", key=f"inc_{tab_idx}_{cid}"):
-                                        hidden_ids.discard(cid)
-                                        st.rerun()
-                                # Language override
-                                _alo = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
-                                _ald = [LANGUAGE_NAMES.get(lc, lc) for lc in _alo]
-                                _clc = c.get("matched_language", "en")
-                                _cld = LANGUAGE_NAMES.get(_clc, _clc)
-                                _mlk = f"lang_{tab_idx}_{cid}"
-                                if _mlk not in st.session_state:
-                                    st.session_state[_mlk] = _cld
-                                _nld = st.selectbox("Lang", options=_ald, key=_mlk, label_visibility="collapsed")
-                                _n2c = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _alo}
-                                _nlc = _n2c.get(_nld, _clc)
-                                if _nlc != c.get("matched_language", "en"):
-                                    c["matched_language"] = _nlc
+                                with _c_act:
+                                    if not _is_skipped:
+                                        if st.button("Skip", key=f"skip_{_tidx}_{cid}"):
+                                            _hidden_f.add(cid)
+                                    else:
+                                        if st.button("Include", key=f"inc_{_tidx}_{cid}"):
+                                            _hidden_f.discard(cid)
+                                    _alo = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
+                                    _ald = [LANGUAGE_NAMES.get(lc, lc) for lc in _alo]
+                                    _clc = c.get("matched_language", "en")
+                                    _cld = LANGUAGE_NAMES.get(_clc, _clc)
+                                    _mlk = f"lang_{_tidx}_{cid}"
+                                    if _mlk not in st.session_state:
+                                        st.session_state[_mlk] = _cld
+                                    _nld = st.selectbox("Lang", options=_ald, key=_mlk, label_visibility="collapsed")
+                                    _n2c = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _alo}
+                                    _nlc = _n2c.get(_nld, _clc)
+                                    if _nlc != c.get("matched_language", "en"):
+                                        c["matched_language"] = _nlc
+
+                    st.session_state["hidden_ids"] = _hidden_f
+                    st.session_state["_bulk_selected"] = _bsel_f
+
+                _render_tab_cards(_filtered_tab, tab_idx)
 
         # PDF export for multi-analysis
         st.divider()
