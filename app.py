@@ -1188,7 +1188,7 @@ def main():
                 st.session_state["_bulk_selected"] = set()
                 for k in list(st.session_state.keys()):
                     if k.startswith("sel_"):
-                        st.session_state.pop(k, None)
+                        del st.session_state[k]
                 st.rerun()
         with _bk2:
             if st.button("Unselect all", key="m_bulk_unselect"):
@@ -1196,7 +1196,7 @@ def main():
                 # Clear ALL selection checkbox keys
                 for k in list(st.session_state.keys()):
                     if k.startswith("sel_"):
-                        st.session_state.pop(k, None)
+                        del st.session_state[k]
                 st.rerun()
 
         tab_names = [r["name"] for r in multi_analyses]
@@ -1705,8 +1705,9 @@ def main():
                     changed += 1
             if changed:
                 st.session_state["_bulk_selected"] = set()
-                for cid in list(bulk_selected):
-                    st.session_state.pop(f"sel_{cid}", None)
+                for k in list(st.session_state.keys()):
+                    if k.startswith("sel_"):
+                        del st.session_state[k]
                 st.rerun()
 
     # Language
@@ -1732,8 +1733,9 @@ def main():
                     changed += 1
             if changed:
                 st.session_state["_bulk_selected"] = set()
-                for cid in list(bulk_selected):
-                    st.session_state.pop(f"sel_{cid}", None)
+                for k in list(st.session_state.keys()):
+                    if k.startswith("sel_"):
+                        del st.session_state[k]
                 st.rerun()
 
     # Skip + Unselect
@@ -1750,8 +1752,9 @@ def main():
     with _bk_col2:
         if st.button("Unselect all", key="bulk_unselect"):
             st.session_state["_bulk_selected"] = set()
-            for cid in list(bulk_selected):
-                st.session_state.pop(f"sel_{cid}", None)
+            for k in list(st.session_state.keys()):
+                if k.startswith("sel_"):
+                    del st.session_state[k]
             st.rerun()
 
 
