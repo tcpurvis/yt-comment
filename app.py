@@ -1517,23 +1517,76 @@ def main():
     # Bulk actions in sidebar
     st.sidebar.header("Bulk Actions")
     st.sidebar.caption(f"**{len(bulk_selected)}** comments selected")
-    bulk_target = st.sidebar.selectbox(
-        "Change sentiment to",
-        options=["Positive", "Neutral", "Negative"],
-        key="bulk_sentiment_target",
+
+    bulk_action = st.sidebar.selectbox(
+        "Action",
+        options=["Change sentiment", "Change language", "Skip selected"],
+        key="bulk_action_type",
     )
-    if st.sidebar.button("Apply to selected", key="bulk_sentiment_apply", type="primary"):
-        changed = 0
-        for c in display_comments:
-            if c["_id"] in bulk_selected and c["sentiment_label"] != bulk_target:
-                c["sentiment_label"] = bulk_target
-                c["sentiment_override"] = True
-                changed += 1
-        if changed:
-            st.session_state["_bulk_selected"] = set()
-            st.rerun()
+
+    if bulk_action == "Change sentiment":
+        bulk_target = st.sidebar.selectbox(
+            "Set sentiment to",
+            options=["Positive", "Neutral", "Negative"],
+            key="bulk_sentiment_target",
+        )
+        if st.sidebar.button("Apply", key="bulk_apply", type="primary"):
+            changed = 0
+            for c in all_comments:
+                if c["_id"] in bulk_selected and c["sentiment_label"] != bulk_target:
+                    c["sentiment_label"] = bulk_target
+                    c["sentiment_override"] = True
+                    changed += 1
+            if changed:
+                st.session_state["_bulk_selected"] = set()
+                # Clear checkbox keys so they reset
+                for cid in list(bulk_selected):
+                    st.session_state.pop(f"sel_{cid}", None)
+                st.rerun()
+
+    elif bulk_action == "Change language":
+        _bulk_lang_opts = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
+        _bulk_lang_display = [LANGUAGE_NAMES.get(lc, lc) for lc in _bulk_lang_opts]
+        bulk_lang = st.sidebar.selectbox(
+            "Set language to",
+            options=_bulk_lang_display,
+            key="bulk_lang_target",
+        )
+        if st.sidebar.button("Apply", key="bulk_apply_lang", type="primary"):
+            _n2c = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _bulk_lang_opts}
+            _new_code = _n2c.get(bulk_lang, "en")
+            changed = 0
+            for c in all_comments:
+                if c["_id"] in bulk_selected and c.get("matched_language", "en") != _new_code:
+                    c["matched_language"] = _new_code
+                    # Also update per-comment language widget keys
+                    st.session_state.pop(f"lang_{c['_id']}", None)
+                    changed += 1
+            if changed:
+                st.session_state["_bulk_selected"] = set()
+                for cid in list(bulk_selected):
+                    st.session_state.pop(f"sel_{cid}", None)
+                st.rerun()
+
+    elif bulk_action == "Skip selected":
+        if st.sidebar.button("Skip all selected", key="bulk_skip", type="primary"):
+            skipped = 0
+            for cid in bulk_selected:
+                if cid not in hidden_ids:
+                    hidden_ids.add(cid)
+                    skipped += 1
+            if skipped:
+                st.session_state["hidden_ids"] = hidden_ids
+                st.session_state["_bulk_selected"] = set()
+                for cid in list(bulk_selected):
+                    st.session_state.pop(f"sel_{cid}", None)
+                st.rerun()
+
     if st.sidebar.button("Unselect all", key="bulk_unselect"):
         st.session_state["_bulk_selected"] = set()
+        # Clear all checkbox keys
+        for cid in list(bulk_selected):
+            st.session_state.pop(f"sel_{cid}", None)
         st.rerun()
 
     # Render sentiment-grouped comment cards
