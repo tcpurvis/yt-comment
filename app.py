@@ -1579,17 +1579,20 @@ def main():
                     )
                     _lang_display = [LANGUAGE_NAMES.get(lc, lc) for lc in _all_lang_opts]
                     _cur_lc = c.get("matched_language", "en")
-                    _cur_idx = _all_lang_opts.index(_cur_lc) if _cur_lc in _all_lang_opts else 0
+                    _cur_disp = LANGUAGE_NAMES.get(_cur_lc, _cur_lc)
+                    # Initialize widget key from comment data
+                    _lk = f"lang_{cid}"
+                    if _lk not in st.session_state:
+                        st.session_state[_lk] = _cur_disp
                     _new_lang_disp = st.selectbox(
                         "Lang",
                         options=_lang_display,
-                        index=_cur_idx,
-                        key=f"lang_{cid}",
+                        key=_lk,
                         label_visibility="collapsed",
                     )
                     _name_to_code_r = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _all_lang_opts}
                     _new_lc = _name_to_code_r.get(_new_lang_disp, _cur_lc)
-                    if _new_lc != _cur_lc:
+                    if _new_lc != c.get("matched_language", "en"):
                         c["matched_language"] = _new_lc
 
     st.session_state["hidden_ids"] = hidden_ids
