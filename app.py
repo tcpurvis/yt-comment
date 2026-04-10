@@ -1079,6 +1079,100 @@ def main():
     # Tab selector for multi-analysis
     _active_tab = 0
     if multi_analyses and len(multi_analyses) > 1:
+        # Sidebar: Language Detection + Bulk Actions for multi-tab
+        _all_multi_comments = []
+        for _ma in multi_analyses:
+            _all_multi_comments.extend(_ma["comments"])
+        _vis_multi = [c for c in _all_multi_comments if c["_id"] not in hidden_ids]
+
+        _m_lang_counts: dict[str, int] = {}
+        for c in _vis_multi:
+            lc = c.get("matched_language", "en")
+            name = LANGUAGE_NAMES.get(lc, lc)
+            _m_lang_counts[name] = _m_lang_counts.get(name, 0) + 1
+
+        _m_non_english = [c for c in _vis_multi
+                          if c.get("matched_language", "en") not in ("en", "all")
+                          and (not c.get("back_translation") or c["back_translation"] == c["comment"])]
+
+        st.sidebar.header("Language Detection")
+        _m_lang_parts = [f"{n}: {ct:,}" for n, ct in sorted(_m_lang_counts.items(), key=lambda x: -x[1])]
+        st.sidebar.caption(" · ".join(_m_lang_parts))
+        if _m_non_english:
+            st.sidebar.caption(f"**{len(_m_non_english):,}** untranslated")
+            if st.sidebar.button("Translate All", key="bulk_translate_multi", type="primary"):
+                texts = [c["comment"] for c in _m_non_english]
+                with st.spinner(f"Translating {len(texts):,} comments..."):
+                    translations = batch_back_translate(texts)
+                for c, translation in zip(_m_non_english, translations):
+                    c["back_translation"] = translation
+                    c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
+                st.rerun()
+        st.sidebar.divider()
+
+        st.sidebar.header("Bulk Actions")
+        st.sidebar.caption(f"**{len(bulk_selected)}** selected")
+
+        _bs1, _bs2 = st.sidebar.columns([0.6, 0.4])
+        with _bs1:
+            _m_bulk_sent = st.selectbox("Sentiment", options=["Positive", "Neutral", "Negative"],
+                                        key="m_bulk_sent", label_visibility="collapsed")
+        with _bs2:
+            if st.button("Apply", key="m_bulk_apply_sent", type="primary"):
+                changed = 0
+                for c in _all_multi_comments:
+                    if c["_id"] in bulk_selected and c["sentiment_label"] != _m_bulk_sent:
+                        c["sentiment_label"] = _m_bulk_sent
+                        c["sentiment_override"] = True
+                        changed += 1
+                if changed:
+                    st.session_state["_bulk_selected"] = set()
+                    for cid in list(bulk_selected):
+                        for ti in range(len(multi_analyses)):
+                            st.session_state.pop(f"sel_{ti}_{cid}", None)
+                    st.rerun()
+
+        _m_lang_opts = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
+        _m_lang_disp = [LANGUAGE_NAMES.get(lc, lc) for lc in _m_lang_opts]
+        _bl1, _bl2 = st.sidebar.columns([0.6, 0.4])
+        with _bl1:
+            _m_bulk_lang = st.selectbox("Language", options=_m_lang_disp,
+                                        key="m_bulk_lang", label_visibility="collapsed")
+        with _bl2:
+            if st.button("Apply", key="m_bulk_apply_lang", type="primary"):
+                _n2c = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _m_lang_opts}
+                _new_code = _n2c.get(_m_bulk_lang, "en")
+                changed = 0
+                for c in _all_multi_comments:
+                    if c["_id"] in bulk_selected and c.get("matched_language", "en") != _new_code:
+                        c["matched_language"] = _new_code
+                        changed += 1
+                if changed:
+                    st.session_state["_bulk_selected"] = set()
+                    for cid in list(bulk_selected):
+                        for ti in range(len(multi_analyses)):
+                            st.session_state.pop(f"sel_{ti}_{cid}", None)
+                    st.rerun()
+
+        _bk1, _bk2 = st.sidebar.columns(2)
+        with _bk1:
+            if st.button("Skip selected", key="m_bulk_skip"):
+                for cid in bulk_selected:
+                    hidden_ids.add(cid)
+                st.session_state["hidden_ids"] = hidden_ids
+                st.session_state["_bulk_selected"] = set()
+                for cid in list(bulk_selected):
+                    for ti in range(len(multi_analyses)):
+                        st.session_state.pop(f"sel_{ti}_{cid}", None)
+                st.rerun()
+        with _bk2:
+            if st.button("Unselect all", key="m_bulk_unselect"):
+                st.session_state["_bulk_selected"] = set()
+                for cid in list(bulk_selected):
+                    for ti in range(len(multi_analyses)):
+                        st.session_state.pop(f"sel_{ti}_{cid}", None)
+                st.rerun()
+
         tab_names = [r["name"] for r in multi_analyses]
         tabs = st.tabs(tab_names)
         # We render the full view inside each tab
@@ -1125,10 +1219,50 @@ def main():
                         with st.expander(f"**Summary**", expanded=True):
                             st.markdown(_ai_sum, unsafe_allow_html=True)
 
-                # Comment list with full controls
+                # Filter & Sort for this tab
+                with st.expander("**Filter & Sort**", expanded=False):
+                    _tf1, _tf2 = st.columns(2)
+                    with _tf1:
+                        _t_text_search = st.text_input("Search within comments",
+                                                       placeholder="e.g. auto-generated",
+                                                       key=f"mfs_text_{tab_idx}")
+                    with _tf2:
+                        _t_text_exclude = st.text_input("Does not contain",
+                                                        placeholder="e.g. spam, bot",
+                                                        key=f"mfs_excl_{tab_idx}")
+                    _tf3, _tf4 = st.columns(2)
+                    with _tf3:
+                        _t_min_likes = st.number_input("Min likes", min_value=0, value=0,
+                                                       step=1, key=f"mfs_likes_{tab_idx}")
+                    with _tf4:
+                        _t_sort_opts = {
+                            "Date (newest)": ("date", True),
+                            "Date (oldest)": ("date", False),
+                            "Likes (most)": ("likes", True),
+                            "Likes (fewest)": ("likes", False),
+                        }
+                        _t_sort = st.selectbox("Sort by", options=list(_t_sort_opts.keys()),
+                                               key=f"mfs_sort_{tab_idx}")
+
+                # Apply filters to this tab's comments
+                _filtered_tab = _tab_comments
+                if _t_text_search:
+                    _ts_low = _t_text_search.lower()
+                    _filtered_tab = [c for c in _filtered_tab if _ts_low in c["comment"].lower()]
+                if _t_text_exclude:
+                    _excl_words = [w.strip().lower() for w in _t_text_exclude.split(",") if w.strip()]
+                    _filtered_tab = [c for c in _filtered_tab
+                                     if not any(w in c["comment"].lower() for w in _excl_words)]
+                if _t_min_likes > 0:
+                    _filtered_tab = [c for c in _filtered_tab if c.get("likes", 0) >= _t_min_likes]
+                _sk, _sr = _t_sort_opts[_t_sort]
+                _filtered_tab = sorted(_filtered_tab, key=lambda c: c.get(_sk, ""), reverse=_sr)
+
+                st.caption(f"Showing **{len(_filtered_tab):,}** comments")
+
                 _t_groups = {}
                 for _lbl in ["Positive", "Neutral", "Negative"]:
-                    _grp = [c for c in _tab_comments if c["sentiment_label"] == _lbl]
+                    _grp = [c for c in _filtered_tab if c["sentiment_label"] == _lbl]
                     if _grp:
                         _t_groups[_lbl] = _grp
 
