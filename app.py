@@ -332,38 +332,40 @@ def main():
         '</div>'
     )
 
-    header_left, header_right = st.columns([0.8, 0.2])
-    with header_left:
-        st.title("YouTube Comment Analysis")
-        st.caption("Search · Analyze sentiment · Discover themes · Export PDF")
-    with header_right:
-        # Save project button (only when data exists)
-        if "raw_comments" in st.session_state:
-            st.html('<p style="text-align:right;font-size:12px;color:#6b7280;margin-bottom:4px;">Save full session to resume later</p>')
-            _raw_h = st.session_state["raw_comments"]
-            _sq_h = st.session_state.get("search_query", "export")
-            _vtitles_h = sorted(set(c.get("video_title", "") for c in _raw_h if c.get("video_title")))
-            _tslug_h = re.sub(r"[^\w\s-]", "", _vtitles_h[0] if len(_vtitles_h) == 1 else "multiple_videos")
-            _tslug_h = re.sub(r"\s+", "_", _tslug_h.strip())[:50]
-            from datetime import datetime as _dt_h
-            _exp_ts_h = _dt_h.now().strftime("%Y-%m-%d_%H%M%S")
+    st.title("YouTube Comment Analysis")
+    st.caption("Search · Analyze sentiment · Discover themes · Export PDF")
 
-            _payload_h: dict = {"search_query": _sq_h, "comments": _raw_h}
-            if "analyzed_comments" in st.session_state:
-                _payload_h["analyzed_comments"] = st.session_state["analyzed_comments"]
-                _payload_h["hidden_ids"] = list(st.session_state.get("hidden_ids", set()))
-                _payload_h["keywords"] = st.session_state.get("keywords", [])
-                _payload_h["preset"] = st.session_state.get("keyword_preset", "Custom")
-                _payload_h["ai_summary"] = st.session_state.get("ai_summary", "")
+    # Save project button in sidebar (only when data exists)
+    if "raw_comments" in st.session_state:
+        st.sidebar.header("Save Project")
+        st.sidebar.caption("Save full session to resume later")
+        _raw_h = st.session_state["raw_comments"]
+        _sq_h = st.session_state.get("search_query", "export")
+        _vtitles_h = sorted(set(c.get("video_title", "") for c in _raw_h if c.get("video_title")))
+        _tslug_h = re.sub(r"[^\w\s-]", "", _vtitles_h[0] if len(_vtitles_h) == 1 else "multiple_videos")
+        _tslug_h = re.sub(r"\s+", "_", _tslug_h.strip())[:50]
+        from datetime import datetime as _dt_h
+        _exp_ts_h = _dt_h.now().strftime("%Y-%m-%d_%H%M%S")
 
-            _data_h = json.dumps(_payload_h, ensure_ascii=False).encode("utf-8")
-            st.download_button(
-                label="Save Project",
-                data=_data_h,
-                file_name=f"{_tslug_h}_{_exp_ts_h}.json",
-                mime="application/json",
-                key="save_project_header",
-            )
+        _payload_h: dict = {"search_query": _sq_h, "comments": _raw_h}
+        if "analyzed_comments" in st.session_state:
+            _payload_h["analyzed_comments"] = st.session_state["analyzed_comments"]
+            _payload_h["hidden_ids"] = list(st.session_state.get("hidden_ids", set()))
+            _payload_h["keywords"] = st.session_state.get("keywords", [])
+            _payload_h["preset"] = st.session_state.get("keyword_preset", "Custom")
+            _payload_h["ai_summary"] = st.session_state.get("ai_summary", "")
+        if st.session_state.get("multi_analyses"):
+            _payload_h["multi_analyses"] = st.session_state["multi_analyses"]
+
+        _data_h = json.dumps(_payload_h, ensure_ascii=False).encode("utf-8")
+        st.sidebar.download_button(
+            label="Save Project",
+            data=_data_h,
+            file_name=f"{_tslug_h}_{_exp_ts_h}.json",
+            mime="application/json",
+            key="save_project_sidebar",
+        )
+        st.sidebar.divider()
 
     api_key = st.secrets.get("YOUTUBE_API_KEY", "")
     if not api_key:
@@ -849,20 +851,24 @@ def main():
                     st.session_state["selected_langs"] = list(SUPPORTED_LANGUAGES.keys())
                 st.session_state.pop("_translated_kw_map", None)
 
-            keyword_input = st.text_input(
-                "Filter comments by keywords (comma-separated)",
-                placeholder="e.g. great, awesome, helpful",
-                key="keyword_input",
-            )
-            keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
+            if not is_multi_preset:
+                keyword_input = st.text_input(
+                    "Filter comments by keywords (comma-separated)",
+                    placeholder="e.g. great, awesome, helpful",
+                    key="keyword_input",
+                )
+                keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
 
-            exclude_input = st.text_input(
-                "Exclude comments containing (comma-separated)",
-                placeholder="e.g. spam, subscribe, giveaway",
-                help="Comments matching any of these words will be excluded.",
-                key="exclude_input",
-            )
-            exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
+                exclude_input = st.text_input(
+                    "Exclude comments containing (comma-separated)",
+                    placeholder="e.g. spam, subscribe, giveaway",
+                    help="Comments matching any of these words will be excluded.",
+                    key="exclude_input",
+                )
+                exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
+            else:
+                keywords = []
+                exclude_keywords = []
         else:
             keywords = []
             exclude_keywords = []
@@ -1116,7 +1122,7 @@ def main():
                         with st.expander(f"**Summary**", expanded=True):
                             st.markdown(_ai_sum, unsafe_allow_html=True)
 
-                # Comment list (simplified for tabs)
+                # Comment list with full controls
                 _t_groups = {}
                 for _lbl in ["Positive", "Neutral", "Negative"]:
                     _grp = [c for c in _tab_comments if c["sentiment_label"] == _lbl]
@@ -1128,16 +1134,86 @@ def main():
                     with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=False):
                         for c in _grp_c:
                             cid = c["_id"]
-                            _kept = st.checkbox("include", value=(cid not in hidden_ids),
-                                                key=f"cb_{tab_idx}_{cid}", label_visibility="collapsed")
-                            if _kept:
-                                hidden_ids.discard(cid)
-                            else:
-                                hidden_ids.add(cid)
-                            comment_text = html_mod.escape(c["comment"])
-                            author_text = html_mod.escape(c["author"])
-                            st.html(f'<div style="padding:6px 0;border-bottom:1px solid #f0f0f0;opacity:{"1" if _kept else "0.35"};">'
-                                    f'<b>{author_text}</b> · {c["date"][:10]}<br>{comment_text}</div>')
+                            _is_skipped = cid in hidden_ids
+
+                            _c_sel, _c_card, _c_act = st.columns([0.03, 0.87, 0.10], vertical_alignment="top")
+                            with _c_sel:
+                                _sel = st.checkbox("sel", value=(cid in bulk_selected),
+                                                   key=f"sel_{tab_idx}_{cid}", label_visibility="collapsed")
+                                if _sel:
+                                    bulk_selected.add(cid)
+                                else:
+                                    bulk_selected.discard(cid)
+
+                            with _c_card:
+                                _av_bg = _avatar_color(c["author"])
+                                _ini = _initials(c["author"])
+                                _ds = _format_date(c["date"])
+                                _sb = _sentiment_badge(c["sentiment_label"])
+                                _op = "0.35" if _is_skipped else "1"
+                                _ct = html_mod.escape(c["comment"])
+                                _at = html_mod.escape(c["author"])
+
+                                _tg = ""
+                                _lc = c.get("matched_language", "en")
+                                if _lc not in ("en", "all"):
+                                    _ll = LANGUAGE_NAMES.get(_lc, _lc)
+                                    _tg = (f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
+                                           f'font-size:11px;font-weight:500;color:#00BCE7;background:#e0f7fc;">'
+                                           f'🌐 {_ll}</span>')
+                                if _tg:
+                                    _tg = f'<div style="margin-bottom:6px;">{_tg}</div>'
+
+                                _tr_html = ""
+                                if c.get("back_translation") and c.get("original_language"):
+                                    _bt = html_mod.escape(c["back_translation"])
+                                    _tr_html = (f'<div style="margin-top:8px;padding:8px 12px;background:#f0f4ff;'
+                                                f'border-left:3px solid #00BCE7;border-radius:4px;font-size:13px;'
+                                                f'color:#4a5568;font-style:italic;">🌐 English: {_bt}</div>')
+
+                                st.html(f"""
+                                <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f0f0f0;opacity:{_op};">
+                                  <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;
+                                              background:{_av_bg};display:flex;align-items:center;
+                                              justify-content:center;color:#fff;font-weight:700;font-size:14px;">
+                                    {_ini}
+                                  </div>
+                                  <div style="flex:1;min-width:0;">
+                                    {_tg}
+                                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                      <span style="font-weight:600;font-size:13px;color:#030303;">{_at}</span>
+                                      <span style="font-size:12px;color:#909090;">{_ds}</span>
+                                      {_sb}
+                                    </div>
+                                    <div style="margin-top:6px;font-size:14px;color:#030303;line-height:1.5;
+                                                word-wrap:break-word;">{_ct}</div>
+                                    {_tr_html}
+                                  </div>
+                                </div>
+                                """)
+
+                            with _c_act:
+                                if not _is_skipped:
+                                    if st.button("Skip", key=f"skip_{tab_idx}_{cid}"):
+                                        hidden_ids.add(cid)
+                                        st.rerun()
+                                else:
+                                    if st.button("Include", key=f"inc_{tab_idx}_{cid}"):
+                                        hidden_ids.discard(cid)
+                                        st.rerun()
+                                # Language override
+                                _alo = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
+                                _ald = [LANGUAGE_NAMES.get(lc, lc) for lc in _alo]
+                                _clc = c.get("matched_language", "en")
+                                _cld = LANGUAGE_NAMES.get(_clc, _clc)
+                                _mlk = f"lang_{tab_idx}_{cid}"
+                                if _mlk not in st.session_state:
+                                    st.session_state[_mlk] = _cld
+                                _nld = st.selectbox("Lang", options=_ald, key=_mlk, label_visibility="collapsed")
+                                _n2c = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _alo}
+                                _nlc = _n2c.get(_nld, _clc)
+                                if _nlc != c.get("matched_language", "en"):
+                                    c["matched_language"] = _nlc
 
         # PDF export for multi-analysis
         st.divider()
