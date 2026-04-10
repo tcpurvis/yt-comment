@@ -438,6 +438,15 @@ def main():
                 except Exception as e:
                     st.error(f"Failed to load file: {e}")
 
+        # Re-analyze sentiment option
+        if "analyzed_comments" in st.session_state:
+            if st.button("Re-analyze sentiment (refresh with latest detection)", key="reanalyze_sent"):
+                _to_reanalyze = st.session_state["analyzed_comments"]
+                with st.spinner(f"Re-analyzing sentiment on {len(_to_reanalyze):,} comments..."):
+                    add_sentiment(_to_reanalyze)
+                st.success("Sentiment re-analyzed with latest detection.")
+                st.rerun()
+
     elif input_mode == "Paste video URLs":
         url_input = st.text_area(
             "YouTube video URLs (one per line)",
@@ -821,12 +830,17 @@ def main():
 
     with _analyze_expander:
         if not search_all:
-            # Preset selector
-            preset_names = ["Custom"] + list(KEYWORD_PRESETS.keys())
+            # Preset selector — Subtitles & Dubs is the default
+            _all_presets = list(KEYWORD_PRESETS.keys())
+            # Put "Subtitles & Dubs" first if it exists
+            if "Subtitles & Dubs" in _all_presets:
+                _all_presets.remove("Subtitles & Dubs")
+                _all_presets.insert(0, "Subtitles & Dubs")
+            preset_names = _all_presets + ["Custom"]
             selected_preset = st.selectbox(
-                "Keyword preset",
+                "Analysis type",
                 options=preset_names,
-                help="Load a pre-built keyword set or use your own custom keywords.",
+                help="Select an analysis type or choose Custom for manual keyword search.",
                 key="keyword_preset",
             )
 
@@ -1138,9 +1152,9 @@ def main():
                         changed += 1
                 if changed:
                     st.session_state["_bulk_selected"] = set()
-                    for cid in list(bulk_selected):
-                        for ti in range(len(multi_analyses)):
-                            st.session_state.pop(f"sel_{ti}_{cid}", None)
+                    for k in list(st.session_state.keys()):
+                        if k.startswith("sel_"):
+                            st.session_state.pop(k, None)
                     st.rerun()
 
         _m_lang_opts = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
@@ -1160,9 +1174,9 @@ def main():
                         changed += 1
                 if changed:
                     st.session_state["_bulk_selected"] = set()
-                    for cid in list(bulk_selected):
-                        for ti in range(len(multi_analyses)):
-                            st.session_state.pop(f"sel_{ti}_{cid}", None)
+                    for k in list(st.session_state.keys()):
+                        if k.startswith("sel_"):
+                            st.session_state.pop(k, None)
                     st.rerun()
 
         _bk1, _bk2 = st.sidebar.columns(2)
@@ -1172,16 +1186,17 @@ def main():
                     hidden_ids.add(cid)
                 st.session_state["hidden_ids"] = hidden_ids
                 st.session_state["_bulk_selected"] = set()
-                for cid in list(bulk_selected):
-                    for ti in range(len(multi_analyses)):
-                        st.session_state.pop(f"sel_{ti}_{cid}", None)
+                for k in list(st.session_state.keys()):
+                    if k.startswith("sel_"):
+                        st.session_state.pop(k, None)
                 st.rerun()
         with _bk2:
             if st.button("Unselect all", key="m_bulk_unselect"):
                 st.session_state["_bulk_selected"] = set()
-                for cid in list(bulk_selected):
-                    for ti in range(len(multi_analyses)):
-                        st.session_state.pop(f"sel_{ti}_{cid}", None)
+                # Clear ALL selection checkbox keys
+                for k in list(st.session_state.keys()):
+                    if k.startswith("sel_"):
+                        st.session_state.pop(k, None)
                 st.rerun()
 
         tab_names = [r["name"] for r in multi_analyses]
