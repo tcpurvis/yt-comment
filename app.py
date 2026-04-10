@@ -1593,6 +1593,12 @@ def main():
         _hidden = st.session_state.get("hidden_ids", set())
         _bsel = st.session_state.get("_bulk_selected", set())
 
+        def _clear_selections():
+            for k in list(st.session_state.keys()):
+                if k.startswith("sel_"):
+                    st.session_state.pop(k, None)
+            st.session_state["_bulk_selected"] = set()
+
         for label, group_comments in sentiment_groups.items():
             emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
             with st.expander(f"**{emoji} {label}** — {len(group_comments)} comments", expanded=True):
@@ -1692,9 +1698,11 @@ def main():
                         if not is_skipped:
                             if st.button("Skip", key=f"skip_{cid}"):
                                 _hidden.add(cid)
+                                _clear_selections()
                         else:
                             if st.button("Include", key=f"unskip_{cid}"):
                                 _hidden.discard(cid)
+                                _clear_selections()
                         _all_lang_opts = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
                         _lang_display = [LANGUAGE_NAMES.get(lc, lc) for lc in _all_lang_opts]
                         _cur_lc = c.get("matched_language", "en")
