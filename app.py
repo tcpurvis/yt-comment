@@ -1767,6 +1767,10 @@ def main():
                     st.session_state.pop(k, None)
             st.session_state["_bulk_selected"] = set()
 
+        _all_lang_opts = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
+        _lang_display = [LANGUAGE_NAMES.get(lc, lc) for lc in _all_lang_opts]
+        _n2c_r = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _all_lang_opts}
+
         for label, group_comments in sentiment_groups.items():
             emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[label]
             with st.expander(f"**{emoji} {label}** — {len(group_comments)} comments", expanded=True):
@@ -1774,114 +1778,86 @@ def main():
                     cid = c["_id"]
                     is_skipped = cid in _hidden
 
-                    col_sel, col_card, col_act = st.columns([0.03, 0.87, 0.10], vertical_alignment="top")
+                    # Build HTML card
+                    avatar_bg = _avatar_color(c["author"])
+                    initials = _initials(c["author"])
+                    date_str = _format_date(c["date"])
+                    sentiment_html = _sentiment_badge(c["sentiment_label"])
+                    opacity = "0.35" if is_skipped else "1"
+                    comment_text = html_mod.escape(c["comment"])
+                    author_text = html_mod.escape(c["author"])
 
-                    with col_sel:
-                        selected = st.checkbox("sel", value=(cid in _bsel),
-                                               key=f"sel_{cid}", label_visibility="collapsed")
-                        if selected:
+                    lang_code = c.get("matched_language", "en")
+                    lang_tag = ""
+                    if lang_code not in ("en", "all"):
+                        ll = LANGUAGE_NAMES.get(lang_code, lang_code)
+                        lang_tag = (f'<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
+                                    f'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-left:6px;">{ll}</span>')
+
+                    reply_tag = ""
+                    if c.get("is_reply"):
+                        reply_tag = ('<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
+                                     'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-right:6px;">↩ reply</span>')
+
+                    meta = ""
+                    if c.get("likes", 0) > 0:
+                        meta += f'<span style="color:#909090;font-size:11px;margin-right:8px;">👍 {c["likes"]}</span>'
+                    if c.get("replies", 0) > 0:
+                        meta += f'<span style="color:#909090;font-size:11px;">💬 {c["replies"]}</span>'
+
+                    tr_html = ""
+                    if c.get("back_translation") and c.get("original_language"):
+                        bt = html_mod.escape(c["back_translation"])
+                        tr_html = (f'<div style="margin-top:4px;padding:4px 8px;background:#f0f4ff;'
+                                   f'border-left:2px solid #00BCE7;border-radius:3px;font-size:12px;'
+                                   f'color:#4a5568;font-style:italic;">🌐 {bt}</div>')
+
+                    st.html(f"""
+                    <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid #f0f0f0;opacity:{opacity};align-items:flex-start;">
+                      <div style="flex-shrink:0;width:32px;height:32px;border-radius:50%;
+                                  background:{avatar_bg};display:flex;align-items:center;
+                                  justify-content:center;color:#fff;font-weight:700;font-size:12px;">
+                        {initials}
+                      </div>
+                      <div style="flex:1;min-width:0;">
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                          {reply_tag}
+                          <span style="font-weight:600;font-size:12px;color:#030303;">{author_text}</span>
+                          <span style="font-size:11px;color:#909090;">{date_str}</span>
+                          {sentiment_html}{lang_tag}
+                        </div>
+                        <div style="margin-top:3px;font-size:13px;color:#030303;line-height:1.4;">{comment_text}</div>
+                        {tr_html}
+                        {f'<div style="margin-top:2px;">{meta}</div>' if meta else ''}
+                      </div>
+                    </div>
+                    """)
+
+                    # Compact controls: checkbox + skip + lang on one line
+                    _c1, _c2, _c3 = st.columns([0.05, 0.10, 0.85])
+                    with _c1:
+                        sel = st.checkbox("s", value=(cid in _bsel), key=f"sel_{cid}", label_visibility="collapsed")
+                        if sel:
                             _bsel.add(cid)
                         else:
                             _bsel.discard(cid)
-
-                    with col_card:
-                        avatar_bg = _avatar_color(c["author"])
-                        initials = _initials(c["author"])
-                        date_str = _format_date(c["date"])
-                        sentiment = _sentiment_badge(c["sentiment_label"])
-                        opacity = "0.35" if is_skipped else "1"
-
-                        reply_marker = ""
-                        if c.get("is_reply"):
-                            reply_marker = (
-                                '<span style="display:inline-block;padding:1px 6px;border-radius:4px;'
-                                'font-size:10px;font-weight:500;color:#00BCE7;background:#e0f7fc;'
-                                'margin-right:6px;">↩ reply</span>'
-                            )
-
-                        likes_html = ""
-                        if c.get("likes", 0) > 0:
-                            likes_html = f'<span style="color:#606060;font-size:12px;margin-right:10px;">👍 {c["likes"]}</span>'
-                        replies_html = ""
-                        if c.get("replies", 0) > 0:
-                            replies_html = f'<span style="color:#606060;font-size:12px;">💬 {c["replies"]}</span>'
-
-                        translation_html = ""
-                        if c.get("back_translation") and c.get("original_language"):
-                            bt = html_mod.escape(c["back_translation"])
-                            translation_html = (
-                                f'<div style="margin-top:8px;padding:8px 12px;background:#f0f4ff;'
-                                f'border-left:3px solid #00BCE7;border-radius:4px;font-size:13px;'
-                                f'color:#4a5568;font-style:italic;">🌐 English: {bt}</div>'
-                            )
-
-                        comment_text = html_mod.escape(c["comment"])
-                        author_text = html_mod.escape(c["author"])
-
-                        tags_html = ""
-                        if len(all_video_titles) > 1 and c.get("video_title"):
-                            vt = html_mod.escape(c["video_title"])
-                            tags_html += (
-                                f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
-                                f'font-size:11px;font-weight:500;color:#4a5568;background:#f3f4f6;'
-                                f'margin-right:6px;">🎬 {vt}</span>'
-                            )
-
-                        lang_code = c.get("matched_language", "en")
-                        if lang_code not in ("en", "all"):
-                            lang_label = LANGUAGE_NAMES.get(lang_code, lang_code)
-                            tags_html += (
-                                f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
-                                f'font-size:11px;font-weight:500;color:#00BCE7;background:#e0f7fc;">'
-                                f'🌐 {lang_label}</span>'
-                            )
-
-                        if tags_html:
-                            tags_html = f'<div style="margin-bottom:6px;">{tags_html}</div>'
-
-                        st.html(f"""
-                        <div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f0f0f0;opacity:{opacity};">
-                          <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;
-                                      background:{avatar_bg};display:flex;align-items:center;
-                                      justify-content:center;color:#fff;font-weight:700;font-size:14px;">
-                            {initials}
-                          </div>
-                          <div style="flex:1;min-width:0;">
-                            {tags_html}
-                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                              {reply_marker}
-                              <span style="font-weight:600;font-size:13px;color:#030303;">{author_text}</span>
-                              <span style="font-size:12px;color:#909090;">{date_str}</span>
-                              {sentiment}
-                            </div>
-                            <div style="margin-top:6px;font-size:14px;color:#030303;line-height:1.5;
-                                        word-wrap:break-word;">{comment_text}</div>
-                            {translation_html}
-                            <div style="margin-top:6px;">{likes_html}{replies_html}</div>
-                          </div>
-                        </div>
-                        """)
-
-                    with col_act:
+                    with _c2:
                         if not is_skipped:
                             if st.button("Skip", key=f"skip_{cid}"):
                                 _hidden.add(cid)
                                 _clear_selections()
                         else:
-                            if st.button("Include", key=f"unskip_{cid}"):
+                            if st.button("Incl", key=f"unskip_{cid}"):
                                 _hidden.discard(cid)
                                 _clear_selections()
-                        _all_lang_opts = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
-                        _lang_display = [LANGUAGE_NAMES.get(lc, lc) for lc in _all_lang_opts]
+                    with _c3:
                         _cur_lc = c.get("matched_language", "en")
                         _cur_disp = LANGUAGE_NAMES.get(_cur_lc, _cur_lc)
                         _lk = f"lang_{cid}"
                         if _lk not in st.session_state:
                             st.session_state[_lk] = _cur_disp
-                        _new_lang_disp = st.selectbox("Lang", options=_lang_display,
-                                                      key=_lk, label_visibility="collapsed")
-                        _name_to_code_r = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _all_lang_opts}
-                        _new_lc = _name_to_code_r.get(_new_lang_disp, _cur_lc)
+                        _new_ld = st.selectbox("L", options=_lang_display, key=_lk, label_visibility="collapsed")
+                        _new_lc = _n2c_r.get(_new_ld, _cur_lc)
                         if _new_lc != c.get("matched_language", "en"):
                             c["matched_language"] = _new_lc
 
