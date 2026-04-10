@@ -7,6 +7,63 @@ import numpy as np
 
 _analyzer = SentimentIntensityAnalyzer()
 
+# Extend VADER with YouTube/internet slang
+_YOUTUBE_SLANG = {
+    # Positive slang
+    "goat": 3.0, "goated": 3.0, "fire": 2.5, "🔥": 2.5,
+    "lit": 2.5, "bussin": 2.5, "slaps": 2.5, "banger": 3.0,
+    "bangers": 3.0, "w": 2.0, "dub": 2.0, "based": 2.0,
+    "slay": 2.5, "slayed": 2.5, "slaying": 2.5, "iconic": 2.5,
+    "peak": 2.5, "valid": 1.5, "goosebumps": 2.0, "chef's kiss": 3.0,
+    "no cap": 2.0, "fr fr": 2.0, "ong": 2.0, "real talk": 2.0,
+    "fax": 2.0, "facts": 2.0, "respect": 2.0, "king": 2.0,
+    "queen": 2.0, "legend": 3.0, "legendary": 3.0, "masterpiece": 3.5,
+    "perfection": 3.5, "underrated": 2.0, "bless": 2.0, "blessed": 2.0,
+    "clutch": 2.5, "insane": 2.0, "heat": 2.0, "pog": 2.5,
+    "poggers": 2.5, "pogchamp": 2.5, "hype": 2.5, "hyped": 2.5,
+    "vibes": 2.0, "vibe": 2.0, "chef kiss": 3.0, "immaculate": 3.0,
+    "elite": 2.5, "top tier": 3.0, "s tier": 3.0, "10/10": 3.5,
+    "100": 2.0, "💯": 2.0, "gem": 2.5, "hidden gem": 3.0,
+    "chills": 2.0, "sheesh": 2.5, "bussin bussin": 3.0,
+    "nailed it": 2.5, "spot on": 2.0, "on point": 2.0,
+    "lets go": 2.5, "let's go": 2.5, "lfg": 2.5, "les go": 2.5,
+    "preach": 2.0, "spitting": 2.0, "spittin": 2.0,
+    "wholesome": 2.5, "heartwarming": 2.5, "goosebump": 2.0,
+    "W take": 2.5, "big W": 2.5, "massive W": 3.0,
+    "ate": 2.5, "ate that": 2.5, "understood the assignment": 3.0,
+    "rent free": 2.0, "hits different": 2.5, "hit different": 2.5,
+    "chef's kiss": 3.0, "muah": 2.0,
+    "❤️": 2.0, "😍": 2.5, "🥰": 2.5, "👏": 2.0, "🙌": 2.0,
+    "😭": 1.5,  # often used positively on YouTube ("I'm crying this is so good")
+    "💀": 1.0,  # "I'm dead" = funny/great
+    "bruh moment": 1.0, "i'm dead": 1.5, "im dead": 1.5,
+
+    # Negative slang
+    "mid": -2.0, "L": -2.0, "ratio": -2.0, "ratioed": -2.5,
+    "cap": -1.5, "capping": -1.5, "sus": -1.5, "sussy": -1.5,
+    "cringe": -2.5, "cringy": -2.5, "cringey": -2.5, "cringe af": -3.0,
+    "trash": -3.0, "garbage": -3.0, "ass": -2.0, "dogwater": -3.0,
+    "dog water": -3.0, "L take": -2.5, "big L": -2.5, "massive L": -3.0,
+    "cope": -2.0, "copium": -2.0, "seethe": -2.5, "touch grass": -2.0,
+    "clown": -2.5, "🤡": -2.5, "clown behavior": -3.0,
+    "fell off": -3.5, "falling off": -3.0, "washed": -2.5,
+    "washed up": -2.5, "overrated": -2.0, "overhyped": -2.0,
+    "clickbait": -2.5, "click bait": -2.5, "scam": -3.0,
+    "flop": -2.5, "flopped": -2.5, "dead channel": -3.0,
+    "unsubbed": -2.5, "unsubscribed": -2.5, "dislike": -2.0,
+    "unwatchable": -3.0, "skip": -1.5, "boring af": -3.0,
+    "yikes": -2.0, "oof": -1.5, "bruh": -1.0,
+    "no one asked": -2.5, "nobody asked": -2.5, "didn't ask": -2.0,
+    "nah": -1.0, "nope": -1.0, "meh": -1.5, "ew": -2.0,
+    "tf": -1.5, "wtf": -1.5, "smh": -1.5,
+    "💩": -2.5, "🗑️": -2.5, "👎": -2.0, "😒": -1.5, "🙄": -1.5,
+    "rigged": -2.5, "robbed": -2.5, "unfair": -2.0,
+    "sellout": -2.5, "sell out": -2.5, "sold out": -2.0,
+    "lazy": -2.0, "low effort": -2.5, "half assed": -2.5,
+}
+
+_analyzer.lexicon.update(_YOUTUBE_SLANG)
+
 
 def analyze_sentiment(text: str) -> dict:
     """Return sentiment label and compound score for a piece of text."""
