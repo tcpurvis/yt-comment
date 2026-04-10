@@ -728,6 +728,17 @@ def main():
                 status.update(label="API error", state="error")
                 st.error(f"**YouTube API error ({e.resp.status}):** {reason}")
                 return
+        except Exception as e:
+            if raw_comments:
+                status.update(
+                    label=f"Error after {len(raw_comments):,} comments — saving what was fetched.",
+                    state="error", expanded=True,
+                )
+                status.write(f"**Error:** {e}")
+            else:
+                status.update(label="Error", state="error")
+                st.error(f"**Error:** {e}")
+                return
 
         was_stopped = st.session_state.get("_stop_fetch", False)
         if was_stopped:
