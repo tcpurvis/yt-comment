@@ -1695,11 +1695,9 @@ def main():
                     if not is_skipped:
                         if st.button("Skip", key=f"skip_{cid}"):
                             hidden_ids.add(cid)
-                            st.rerun()
                     else:
                         if st.button("Include", key=f"unskip_{cid}"):
                             hidden_ids.discard(cid)
-                            st.rerun()
                     # Language override
                     _all_lang_opts = ["en"] + sorted(
                         set(SUPPORTED_LANGUAGES.values())
