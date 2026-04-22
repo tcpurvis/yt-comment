@@ -319,11 +319,35 @@ def main():
         _raw_top = st.session_state["raw_comments"]
         _top_titles = sorted(set(c.get("video_title", "") for c in _raw_top if c.get("video_title")))
         if len(_top_titles) == 1:
-            st.title(_top_titles[0])
+            _page_title = _top_titles[0]
         elif _top_titles:
-            st.title(", ".join(_top_titles[:3]) + (f" (+{len(_top_titles)-3} more)" if len(_top_titles) > 3 else ""))
+            _page_title = ", ".join(_top_titles[:3]) + (f" (+{len(_top_titles)-3} more)" if len(_top_titles) > 3 else "")
         else:
-            st.title(st.session_state.get("search_query", "YouTube Comments"))
+            _page_title = st.session_state.get("search_query", "YouTube Comments")
+
+        # Pick a thumbnail — first stored video_id, otherwise the first comment's video_id
+        _thumb_vid = None
+        _vids_top = st.session_state.get("video_ids") or []
+        if _vids_top:
+            _thumb_vid = _vids_top[0]
+        else:
+            for _c in _raw_top:
+                if _c.get("video_id"):
+                    _thumb_vid = _c["video_id"]
+                    break
+
+        if _thumb_vid:
+            _thumb_url = f"https://img.youtube.com/vi/{_thumb_vid}/mqdefault.jpg"
+            st.html(
+                f'<div style="display:flex;align-items:center;gap:20px;margin:0 0 8px 0;">'
+                f'<img src="{_thumb_url}" alt="" '
+                f'style="height:90px;width:auto;border-radius:6px;object-fit:cover;flex-shrink:0;" />'
+                f'<h1 style="margin:0;font-size:2.25rem;font-weight:700;line-height:1.2;">'
+                f'{html_mod.escape(_page_title)}</h1>'
+                f'</div>'
+            )
+        else:
+            st.title(_page_title)
         st.html(_rainbow_bar)
 
     # Save project button in sidebar (only when data exists)
