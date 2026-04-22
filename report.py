@@ -104,7 +104,8 @@ def _comment_card(c: dict, show_video_tag: bool = False) -> str:
     reply_marker = ""
 
     translation_block = ""
-    if c.get("back_translation") and c.get("original_language"):
+    if (c.get("back_translation") and c.get("original_language")
+            and not c.get("_hide_translation")):
         bt = html.escape(c["back_translation"])
         translation_block = (
             f'<div style="margin-top:8px;padding:8px 12px;background:#f0f4ff;'
@@ -855,7 +856,8 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     pdf.multi_cell(text_w, 4.5, comment_text, new_x="LMARGIN", new_y="NEXT")
 
     # Back-translation
-    if c.get("back_translation") and c.get("original_language"):
+    if (c.get("back_translation") and c.get("original_language")
+            and not c.get("_hide_translation")):
         pdf.set_x(content_x)
         pdf.set_font("Lato", "I", 8)
         pdf.set_text_color(0, 188, 231)
@@ -973,6 +975,7 @@ def build_interactive_html_report(
                 "author": c.get("author", ""),
                 "comment": c.get("comment", ""),
                 "back_translation": c.get("back_translation", ""),
+                "hide_translation": bool(c.get("_hide_translation", False)),
                 "original_language": c.get("original_language", ""),
                 "matched_language": c.get("matched_language", "en"),
                 "mentioned_languages": c.get("mentioned_languages", []),
@@ -1330,7 +1333,7 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
       '<span class="lang-pill">' + langName(lc) + '</span>'
     ).join('');
     const likes = c.likes > 0 ? '<span class="likes">👍 ' + c.likes + '</span>' : '';
-    const translation = c.back_translation && c.back_translation !== c.comment
+    const translation = c.back_translation && c.back_translation !== c.comment && !c.hide_translation
       ? '<div class="translation">🌐 ' + escapeHTML(c.back_translation) + '</div>' : '';
     return '<div class="card" data-id="' + c.id + '">' +
       '<div class="avatar" style="background:' + bg + ';">' + ini + '</div>' +
