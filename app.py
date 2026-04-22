@@ -1064,6 +1064,7 @@ def main():
             for _lbl in ["Positive", "Neutral", "Negative"]:
                 _grp = [c for c in _comments if c["sentiment_label"] == _lbl]
                 if _grp:
+                    _grp.sort(key=lambda c: (abs(c.get("sentiment_score", 0)), c.get("likes", 0)), reverse=True)
                     _groups[_lbl] = _grp
 
             for _lbl, _grp_c in _groups.items():
@@ -1628,11 +1629,12 @@ def main():
     if hidden_count:
         st.info(f"Hiding **{hidden_count}** comment(s). Report will include **{len(visible_comments)}**.")
 
-    # Group comments by sentiment (preserving sort within each group)
+    # Group comments by sentiment, strongest sentiment + most liked first
     sentiment_groups = {}
     for label in ["Positive", "Neutral", "Negative"]:
         group = [c for c in display_comments if c["sentiment_label"] == label]
         if group:
+            group.sort(key=lambda c: (abs(c.get("sentiment_score", 0)), c.get("likes", 0)), reverse=True)
             sentiment_groups[label] = group
 
     st.caption(f"Showing **{total:,}** comments")

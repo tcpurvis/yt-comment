@@ -56,7 +56,7 @@ KEYWORD_PRESETS = {
         "translations": {
             "es": ["subtítulos", "subtitulo", "leyendas", "subtitulado",
                     "subtitulados", "cc"],
-            "fr": ["sous-titres", "sous-titre", "sous titres", "st",
+            "fr": ["sous-titres", "sous-titre", "sous titres",
                     "sous-titré", "cc"],
             "de": ["Untertitel", "UT", "Untertitelung", "untertitelt"],
             "pt": ["legendas", "legenda", "legendado", "legendas automáticas",
