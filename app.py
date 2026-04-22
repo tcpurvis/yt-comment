@@ -1309,7 +1309,8 @@ def main():
         st.sidebar.divider()
 
         st.sidebar.header("Bulk Actions")
-        st.sidebar.caption(f"**{len(bulk_selected)}** selected")
+        _bulk_count_slot = st.sidebar.empty()
+        _bulk_count_slot.caption(f"**{len(bulk_selected)}** selected")
 
         _bs1, _bs2 = st.sidebar.columns([0.6, 0.4])
         with _bs1:
@@ -1359,12 +1360,17 @@ def main():
                     hidden_ids.add(cid)
                 st.session_state["hidden_ids"] = hidden_ids
                 st.session_state["_bulk_selected"] = set()
+                for k in list(st.session_state.keys()):
+                    if k.startswith("sel_"):
+                        st.session_state.pop(k, None)
                 st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
                 st.rerun()
         with _bk2:
             if st.button("Unselect all", key="m_bulk_unselect"):
                 st.session_state["_bulk_selected"] = set()
-                # Clear ALL selection checkbox keys
+                for k in list(st.session_state.keys()):
+                    if k.startswith("sel_"):
+                        st.session_state.pop(k, None)
                 st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
                 st.rerun()
         # Define custom search renderer (runs on raw comments)
@@ -1553,6 +1559,9 @@ def main():
 
             st.session_state["hidden_ids"] = _hidden_f
             st.session_state["_bulk_selected"] = _bsel_f
+            # Update the sidebar counter (only takes effect on full reruns
+            # since fragment-scope reruns don't re-render the sidebar).
+            _bulk_count_slot.caption(f"**{len(_bsel_f)}** selected")
 
         def _render_custom_search_tab(raw_comments, sq, _title_slug, _export_ts, hidden_ids, bulk_selected):
             st.caption("Search any keywords across ALL raw comments (not limited to Subtitles or Dubbing matches).")
@@ -2351,11 +2360,17 @@ def main():
                 hidden_ids.add(cid)
             st.session_state["hidden_ids"] = hidden_ids
             st.session_state["_bulk_selected"] = set()
+            for k in list(st.session_state.keys()):
+                if k.startswith("sel_"):
+                    st.session_state.pop(k, None)
             st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
             st.rerun()
     with _bk_col2:
         if st.button("Unselect all", key="bulk_unselect"):
             st.session_state["_bulk_selected"] = set()
+            for k in list(st.session_state.keys()):
+                if k.startswith("sel_"):
+                    st.session_state.pop(k, None)
             st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
             st.rerun()
 
