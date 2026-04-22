@@ -1094,12 +1094,28 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
 .sent-tag.pos {{ background: #1CE8B5; color: #033d33; }}
 .sent-tag.neg {{ background: #FF5E5B; color: #5a1111; }}
 .sent-tag.neu {{ background: #C94EFF; color: #2e0b3d; }}
-.sent-bar {{ display: flex; height: 26px; border-radius: 6px; overflow: hidden; margin-bottom: 16px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08); }}
-.sent-bar > div {{ display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 13px; font-weight: 700; letter-spacing: 0.3px; }}
-.sent-bar-labels {{ display: flex; font-size: 11px; font-weight: 600; color: var(--muted);
-  margin-top: -10px; margin-bottom: 10px; }}
+.sent-bar {{ display: flex; height: 44px; border-radius: 10px; overflow: hidden;
+  margin-bottom: 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  border: 1px solid rgba(0,0,0,0.06);
+}}
+.sent-bar > div {{
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 14px; font-weight: 700; letter-spacing: 0.3px;
+  cursor: pointer; transition: filter 0.15s ease, transform 0.15s ease;
+  user-select: none; text-shadow: 0 1px 1px rgba(0,0,0,0.12);
+}}
+.sent-bar > div:hover {{ filter: brightness(1.08); }}
+.sent-bar > div.focused {{
+  outline: 3px solid rgba(0,0,0,0.25); outline-offset: -3px;
+}}
+.sent-bar > div .seg-label {{
+  font-size: 10px; font-weight: 700; letter-spacing: 0.6px;
+  text-transform: uppercase; opacity: 0.9; margin-right: 8px;
+}}
+.sent-bar-hint {{
+  font-size: 11px; color: var(--muted); margin-bottom: 14px;
+  font-style: italic;
+}}
 .overall-box {{
   border: 1px solid var(--border); border-radius: 12px; background: #f9fafb;
   padding: 16px 20px; margin: 18px 0 6px;
@@ -1312,10 +1328,19 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
       if (!n) continue;
       const pct = (n / total * 100).toFixed(1);
       const color = DATA.sentiment_colors[lbl];
-      bits.push('<div style="width:' + pct + '%;background:' + color + ';">' +
-                (pct >= 8 ? n + ' · ' + pct + '%' : '') + '</div>');
+      const labelFits = pct >= 12;
+      const inner = labelFits
+        ? '<span class="seg-label">' + lbl.toUpperCase() + '</span>' +
+          '<span>' + n + ' · ' + pct + '%</span>'
+        : (pct >= 6 ? n : '');
+      bits.push(
+        '<div data-sent="' + lbl + '" style="width:' + pct + '%;background:' + color + ';" ' +
+        'title="Click to filter to ' + lbl + ' comments only (' + n + ' · ' + pct + '%)">' +
+        inner + '</div>'
+      );
     }}
-    return '<div class="sent-bar">' + bits.join('') + '</div>';
+    return '<div class="sent-bar">' + bits.join('') + '</div>' +
+           '<div class="sent-bar-hint">Click a segment to isolate that sentiment. Use the pills below to toggle any back on.</div>';
   }}
   function countSentiments(comments) {{
     const c = {{Positive: 0, Negative: 0, Neutral: 0}};
@@ -1590,6 +1615,33 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
         const s = p.dataset.s;
         if (state.sentiments.has(s)) {{ state.sentiments.delete(s); p.classList.remove('active'); }}
         else {{ state.sentiments.add(s); p.classList.add('active'); }}
+        syncPillsFromState();
+        refresh();
+      }});
+    }});
+
+    function syncPillsFromState() {{
+      panel.querySelectorAll('.pill-toggle').forEach(p => {{
+        if (state.sentiments.has(p.dataset.s)) p.classList.add('active');
+        else p.classList.remove('active');
+      }});
+    }}
+
+    // Clicking a sentiment bar segment isolates that sentiment. Clicking the
+    // already-isolated segment clears the filter back to all sentiments.
+    panel.querySelectorAll('.sent-bar > div[data-sent]').forEach(seg => {{
+      seg.addEventListener('click', () => {{
+        const s = seg.dataset.sent;
+        const isAlreadyIsolated = state.sentiments.size === 1 && state.sentiments.has(s);
+        if (isAlreadyIsolated) {{
+          state.sentiments = new Set(['Positive', 'Neutral', 'Negative']);
+        }} else {{
+          state.sentiments = new Set([s]);
+        }}
+        panel.querySelectorAll('.sent-bar > div[data-sent]').forEach(
+          el => el.classList.toggle('focused', state.sentiments.size === 1 && state.sentiments.has(el.dataset.sent))
+        );
+        syncPillsFromState();
         refresh();
       }});
     }});
