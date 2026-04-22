@@ -483,6 +483,7 @@ def main():
         _html_btn_slot = st.sidebar.empty()
         _reanalyze_btn_slot = st.sidebar.empty()
         _regen_sum_btn_slot = st.sidebar.empty()
+        _retag_btn_slot = st.sidebar.empty()
         st.sidebar.divider()
 
         st.sidebar.header("Save Project")
@@ -918,11 +919,17 @@ def main():
 
     def _auto_translate_multi(multi_results):
         """Batch-translate non-English comments in each tab that don't already
-        have a back_translation. Modifies comments in place."""
+        have a back_translation. Modifies comments in place. Comments tagged
+        with a non-English language only because they MENTION it in English
+        (original_language is not set) are skipped — the comment itself is
+        already English and needs no translation."""
         to_translate = []
         for ma in multi_results:
             for c in ma.get("comments", []):
                 if c.get("matched_language", "en") in ("en", "all"):
+                    continue
+                # Tag came from an English-mention scan, not actual non-English text
+                if not c.get("original_language"):
                     continue
                 if c.get("back_translation") and c["back_translation"] != c["comment"]:
                     continue
@@ -936,6 +943,38 @@ def main():
             c["back_translation"] = translation
             if not c.get("original_language"):
                 c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
+
+    def _retag_language_mentions(multi_results) -> tuple[int, int]:
+        """Retroactively scan analyzed comments and add language tags based on
+        language names mentioned in English text. Useful for older exports
+        saved before mention-detection was added. Returns (tagged, updated)."""
+        tagged = 0
+        updated = 0
+        for ma in multi_results:
+            for c in ma.get("comments", []):
+                text = c.get("comment", "")
+                if not text:
+                    continue
+                # If original_language is set, the comment is actually in a
+                # non-English language — don't overwrite its tag.
+                if c.get("original_language"):
+                    continue
+                # Otherwise the comment is English (either detected or assumed).
+                # Look for language mentions by name.
+                mentions = _find_english_language_mentions(text)
+                if not mentions:
+                    continue
+                existing = c.get("matched_language", "en")
+                new_primary = mentions[0]
+                if existing != new_primary or c.get("mentioned_languages") != (mentions if len(mentions) > 1 else None):
+                    c["matched_language"] = new_primary
+                    if len(mentions) > 1:
+                        c["mentioned_languages"] = mentions
+                    else:
+                        c.pop("mentioned_languages", None)
+                    updated += 1
+                tagged += 1
+        return tagged, updated
 
     def _backfill_summaries(multi_results, search_query=""):
         """Generate any missing per-tab AI summaries and one-liners. Safe to
@@ -1260,6 +1299,21 @@ def main():
             st.success("Summaries regenerated.")
             st.rerun()
 
+    # Retroactively scan analyzed comments for English-mention language tags
+    if st.session_state.pop("_needs_retag_mentions", False) and "multi_analyses" in st.session_state:
+        _ma_t = st.session_state.get("multi_analyses") or []
+        if _ma_t:
+            with st.spinner("Scanning comments for language mentions..."):
+                tagged, updated = _retag_language_mentions(_ma_t)
+            st.session_state["multi_analyses"] = _ma_t
+            if updated:
+                st.success(f"Tagged {tagged:,} comments ({updated:,} updated).")
+            elif tagged:
+                st.info(f"Found mentions in {tagged:,} comments — already tagged correctly.")
+            else:
+                st.info("No new language mentions found.")
+            st.rerun()
+
     # --- Nothing analyzed yet ---
     if "analyzed_comments" not in st.session_state:
         return
@@ -1279,6 +1333,10 @@ def main():
         if _regen_sum_btn_slot.button("Regenerate Summaries", key="sidebar_regen_summaries",
                                        help="Force-regenerate the one-line summaries and AI summaries for each section."):
             st.session_state["_needs_regen_summaries"] = True
+            st.rerun()
+        if _retag_btn_slot.button("Scan Language Mentions", key="sidebar_retag_mentions",
+                                   help="Scan English comments for mentioned language names (e.g. 'the Japanese dub') and tag them with those languages. Comments already tagged from actual non-English text are not modified."):
+            st.session_state["_needs_retag_mentions"] = True
             st.rerun()
 
     # Tab selector for multi-analysis
