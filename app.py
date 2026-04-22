@@ -364,20 +364,12 @@ def main():
 
     # Save project button in sidebar (only when data exists)
     if "raw_comments" in st.session_state:
-        # Download PDF Report (at top — renders from stashed bytes after page 2 builds PDF)
-        if st.session_state.get("_pdf_report_bytes"):
-            st.sidebar.download_button(
-                label="Download PDF Report",
-                data=st.session_state["_pdf_report_bytes"],
-                file_name=st.session_state.get("_pdf_report_filename", "report.pdf"),
-                mime="application/pdf",
-                type="primary",
-                key="sidebar_pdf_download",
-            )
-        if st.session_state.get("multi_analyses"):
-            if st.sidebar.button("Reanalyze Data", key="sidebar_reanalyze_top", type="primary"):
-                st.session_state["_needs_reanalyze"] = True
-                st.rerun()
+        # Reserve slots at the top of the sidebar for Download PDF + Reanalyze.
+        # They're filled later in the run once the PDF has been built and the
+        # analysis has run — otherwise on the first page-2 render those buttons
+        # would be missing until the user clicks anything to trigger a rerun.
+        _pdf_btn_slot = st.sidebar.empty()
+        _reanalyze_btn_slot = st.sidebar.empty()
         st.sidebar.divider()
 
         st.sidebar.header("Save Project")
@@ -1050,6 +1042,12 @@ def main():
         st.session_state["_bulk_selected"] = set()
     bulk_selected = st.session_state["_bulk_selected"]
 
+    # Fill the Reanalyze slot now that analysis handlers have run
+    if multi_analyses:
+        if _reanalyze_btn_slot.button("Reanalyze Data", key="sidebar_reanalyze_top", type="primary"):
+            st.session_state["_needs_reanalyze"] = True
+            st.rerun()
+
     # Tab selector for multi-analysis
     _active_tab = 0
     if multi_analyses and len(multi_analyses) > 1:
@@ -1636,6 +1634,15 @@ def main():
             # Stash for sidebar download button
             st.session_state["_pdf_report_bytes"] = pdf_bytes
             st.session_state["_pdf_report_filename"] = f"{_title_slug}_{_export_ts}_report.pdf"
+            # Fill the sidebar placeholder reserved earlier in the run
+            _pdf_btn_slot.download_button(
+                label="Download PDF Report",
+                data=pdf_bytes,
+                file_name=st.session_state["_pdf_report_filename"],
+                mime="application/pdf",
+                type="primary",
+                key="sidebar_pdf_download",
+            )
 
         st.session_state["hidden_ids"] = hidden_ids
         return
