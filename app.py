@@ -1186,17 +1186,13 @@ def main():
                     hidden_ids.add(cid)
                 st.session_state["hidden_ids"] = hidden_ids
                 st.session_state["_bulk_selected"] = set()
-                for k in list(st.session_state.keys()):
-                    if k.startswith("sel_"):
-                        del st.session_state[k]
+                st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
                 st.rerun()
         with _bk2:
             if st.button("Unselect all", key="m_bulk_unselect"):
                 st.session_state["_bulk_selected"] = set()
                 # Clear ALL selection checkbox keys
-                for k in list(st.session_state.keys()):
-                    if k.startswith("sel_"):
-                        del st.session_state[k]
+                st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
                 st.rerun()
 
         tab_names = [r["name"] for r in multi_analyses]
@@ -1337,9 +1333,10 @@ def main():
 
                                 # Single row: checkbox | card | skip | lang
                                 _tc1, _tc2, _tc3, _tc4 = st.columns([0.03, 0.77, 0.07, 0.13], vertical_alignment="top")
+                                _sver_t = st.session_state.get("_sel_version", 0)
                                 with _tc1:
                                     _sel = st.checkbox("s", value=(cid in _bsel_f),
-                                                       key=f"sel_{_tidx}_{cid}", label_visibility="collapsed")
+                                                       key=f"sel_{_tidx}_{cid}_v{_sver_t}", label_visibility="collapsed")
                                     if _sel:
                                         _bsel_f.add(cid)
                                     else:
@@ -1707,9 +1704,7 @@ def main():
                     changed += 1
             if changed:
                 st.session_state["_bulk_selected"] = set()
-                for k in list(st.session_state.keys()):
-                    if k.startswith("sel_"):
-                        del st.session_state[k]
+                st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
                 st.rerun()
 
     # Language
@@ -1735,9 +1730,7 @@ def main():
                     changed += 1
             if changed:
                 st.session_state["_bulk_selected"] = set()
-                for k in list(st.session_state.keys()):
-                    if k.startswith("sel_"):
-                        del st.session_state[k]
+                st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
                 st.rerun()
 
     # Skip + Unselect
@@ -1748,15 +1741,12 @@ def main():
                 hidden_ids.add(cid)
             st.session_state["hidden_ids"] = hidden_ids
             st.session_state["_bulk_selected"] = set()
-            for cid in list(bulk_selected):
-                st.session_state.pop(f"sel_{cid}", None)
+            st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
             st.rerun()
     with _bk_col2:
         if st.button("Unselect all", key="bulk_unselect"):
             st.session_state["_bulk_selected"] = set()
-            for k in list(st.session_state.keys()):
-                if k.startswith("sel_"):
-                    del st.session_state[k]
+            st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
             st.rerun()
 
 
@@ -1767,10 +1757,8 @@ def main():
         _bsel = st.session_state.get("_bulk_selected", set())
 
         def _clear_selections():
-            for k in list(st.session_state.keys()):
-                if k.startswith("sel_"):
-                    st.session_state.pop(k, None)
             st.session_state["_bulk_selected"] = set()
+            st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
 
         _all_lang_opts = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
         _lang_display = [LANGUAGE_NAMES.get(lc, lc) for lc in _all_lang_opts]
@@ -1819,8 +1807,9 @@ def main():
 
                     # Single row: checkbox | comment card | skip | lang
                     _c1, _c2, _c3, _c4 = st.columns([0.03, 0.77, 0.07, 0.13], vertical_alignment="top")
+                    _sver = st.session_state.get("_sel_version", 0)
                     with _c1:
-                        sel = st.checkbox("s", value=(cid in _bsel), key=f"sel_{cid}", label_visibility="collapsed")
+                        sel = st.checkbox("s", value=(cid in _bsel), key=f"sel_{cid}_v{_sver}", label_visibility="collapsed")
                         if sel:
                             _bsel.add(cid)
                         else:
