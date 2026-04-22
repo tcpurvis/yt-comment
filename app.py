@@ -97,6 +97,66 @@ def _decorate_ai_summary(text: str) -> str:
     return re.sub(r"\[(POS|NEG|NEU)\]", _repl, text)
 
 
+def _rename_themes_with_claude(comments: list[dict]) -> None:
+    """Replace TF-IDF theme names (like 'Subtitle / Captions / English') with
+    2-4 word semantic titles (like 'Missing language subtitles'). Modifies
+    comments in place. Silent no-op if the API key is absent or the call fails."""
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    if not api_key or not comments:
+        return
+
+    # Group by current theme label; skip if there's only one cluster.
+    buckets: dict[str, list[dict]] = {}
+    for c in comments:
+        buckets.setdefault(c.get("theme", "General"), []).append(c)
+    if len(buckets) < 2:
+        return
+
+    # Build a numbered list of clusters with up to 5 representative samples each.
+    names = list(buckets.keys())
+    blocks = []
+    for i, name in enumerate(names, start=1):
+        samples = buckets[name][:5]
+        sample_lines = "\n".join(
+            f"  - {(c.get('back_translation') or c['comment'])[:180]}"
+            for c in samples
+        )
+        blocks.append(f"Cluster {i} (currently \"{name}\", {len(buckets[name])} comments):\n{sample_lines}")
+    prompt = (
+        "For each cluster of YouTube comments below, write a concise 2-4 word "
+        "title capturing what the comments are ABOUT (the theme), not the sentiment. "
+        "Be specific — refer to the subject matter, not generic words like 'Comments' "
+        "or 'Discussion'. Return ONLY the titles, one per line, in the format:\n"
+        "1. <title>\n2. <title>\n...\n\n"
+        + "\n\n".join(blocks)
+    )
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        reply = response.content[0].text.strip()
+    except Exception:
+        return
+
+    new_names: dict[str, str] = {}
+    for line in reply.split("\n"):
+        m = re.match(r"\s*(\d+)[\.\)]\s*(.+)", line.strip())
+        if not m:
+            continue
+        idx = int(m.group(1)) - 1
+        title = m.group(2).strip().strip("\"").strip()
+        if 0 <= idx < len(names) and title:
+            new_names[names[idx]] = title
+
+    for c in comments:
+        old = c.get("theme", "General")
+        if old in new_names:
+            c["theme"] = new_names[old]
+
+
 def generate_one_line_summary(comments: list[dict], section_name: str) -> str:
     """Generate a one-sentence sentiment summary for a section using Claude Haiku."""
     api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
@@ -902,6 +962,8 @@ def main():
 
         # Themes
         cluster_into_themes(matched_a)
+        # Replace TF-IDF cluster names with semantic 2-4 word titles.
+        _rename_themes_with_claude(matched_a)
 
         for idx, c in enumerate(matched_a):
             c["_id"] = idx
@@ -1264,10 +1326,10 @@ def main():
         _sb_min_likes = st.sidebar.number_input("Min likes", min_value=0, value=0,
                                                 step=1, key="sb_min_likes")
         _sb_sort_opts = {
-            "Date (newest)": ("date", True),
-            "Date (oldest)": ("date", False),
             "Likes (most)": ("likes", True),
             "Likes (fewest)": ("likes", False),
+            "Date (newest)": ("date", True),
+            "Date (oldest)": ("date", False),
         }
         _sb_sort = st.sidebar.selectbox("Sort by", options=list(_sb_sort_opts.keys()), key="sb_sort")
         st.sidebar.divider()
@@ -1342,10 +1404,19 @@ def main():
             _n2c_t = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _alo}
 
             _groups = {}
+            _sent_rank = {"Positive": 2, "Neutral": 1, "Negative": 0}
             for _lbl in ["Positive", "Neutral", "Negative"]:
                 _grp = [c for c in _comments if c["sentiment_label"] == _lbl]
                 if _grp:
-                    _grp.sort(key=lambda c: (abs(c.get("sentiment_score", 0)), c.get("likes", 0)), reverse=True)
+                    # Primary sort: likes desc. Secondary: sentiment rank desc
+                    # (positive > neutral > negative).
+                    _grp.sort(
+                        key=lambda c: (
+                            c.get("likes", 0),
+                            _sent_rank.get(c.get("sentiment_label"), 0),
+                        ),
+                        reverse=True,
+                    )
                     _groups[_lbl] = _grp
 
             for _lbl, _grp_c in _groups.items():
@@ -1561,6 +1632,7 @@ def main():
                         if matched:
                             add_sentiment(matched)
                             cluster_into_themes(matched)
+                            _rename_themes_with_claude(matched)
                             for idx, c in enumerate(matched):
                                 c["_id"] = f"cs_{idx}"
 
@@ -2026,10 +2098,10 @@ def main():
             min_likes = st.number_input("Min likes", min_value=0, value=0, step=1, key="fs_min_likes")
         with filter_row4_r:
             sort_options = {
-                "Date (newest)": ("date", True),
-                "Date (oldest)": ("date", False),
                 "Likes (most)": ("likes", True),
                 "Likes (fewest)": ("likes", False),
+                "Date (newest)": ("date", True),
+                "Date (oldest)": ("date", False),
                 "Author (A-Z)": ("author", False),
             }
             sort_choice = st.selectbox("Sort by", options=list(sort_options.keys()), key="fs_sort")
@@ -2163,12 +2235,19 @@ def main():
     if hidden_count:
         st.info(f"Hiding **{hidden_count}** comment(s). Report will include **{len(visible_comments)}**.")
 
-    # Group comments by sentiment, strongest sentiment + most liked first
+    # Group comments by sentiment, most liked first (ties broken by positivity)
     sentiment_groups = {}
+    _sent_rank_sa = {"Positive": 2, "Neutral": 1, "Negative": 0}
     for label in ["Positive", "Neutral", "Negative"]:
         group = [c for c in display_comments if c["sentiment_label"] == label]
         if group:
-            group.sort(key=lambda c: (abs(c.get("sentiment_score", 0)), c.get("likes", 0)), reverse=True)
+            group.sort(
+                key=lambda c: (
+                    c.get("likes", 0),
+                    _sent_rank_sa.get(c.get("sentiment_label"), 0),
+                ),
+                reverse=True,
+            )
             sentiment_groups[label] = group
 
     st.caption(f"Showing **{total:,}** comments")

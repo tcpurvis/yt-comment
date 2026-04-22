@@ -448,21 +448,26 @@ def build_pdf_report(
     pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
     pdf.ln(6)
 
-    # ---- Summary info (plain text) ----
-    pdf.set_font("Lato", "", 8)
-    pdf.set_text_color(107, 114, 128)
-    pdf.cell(0, 5, "KEYWORDS", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Lato", "B", 11)
-    pdf.set_text_color(26, 26, 26)
-    pdf.multi_cell(pdf.w - 20, 6, _safe(kw_display), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
-    pdf.set_font("Lato", "", 8)
-    pdf.set_text_color(107, 114, 128)
-    pdf.cell(30, 5, "TOTAL COMMENTS", new_x="END")
-    pdf.set_font("Lato", "B", 11)
-    pdf.set_text_color(26, 26, 26)
-    pdf.cell(0, 5, f"  {total}", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(6)
+    # ---- Summary block ----
+    if multi_sections:
+        # Rounded overall-summary box: sentiment bar + two-column one-liners
+        _draw_overall_summary_box(pdf, sentiment_counts, total, multi_sections)
+    else:
+        # Plain-text summary for single-analysis exports
+        pdf.set_font("Lato", "", 8)
+        pdf.set_text_color(107, 114, 128)
+        pdf.cell(0, 5, "KEYWORDS", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Lato", "B", 11)
+        pdf.set_text_color(26, 26, 26)
+        pdf.multi_cell(pdf.w - 20, 6, _safe(kw_display), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        pdf.set_font("Lato", "", 8)
+        pdf.set_text_color(107, 114, 128)
+        pdf.cell(30, 5, "TOTAL COMMENTS", new_x="END")
+        pdf.set_font("Lato", "B", 11)
+        pdf.set_text_color(26, 26, 26)
+        pdf.cell(0, 5, f"  {total}", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(6)
 
     # ---- Overall sentiment (single-analysis only; multi_sections draws per-section bars) ----
     if not multi_sections:
@@ -557,7 +562,8 @@ def build_pdf_report(
         pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
         pdf.ln(8)
 
-        # Sentiment-grouped comments for this section
+        # Sentiment-grouped comments for this section, with theme sub-groups
+        _sent_rank = {"Positive": 2, "Neutral": 1, "Negative": 0}
         for label in ["Positive", "Neutral", "Negative"]:
             group = [c for c in sec_comments if c["sentiment_label"] == label]
             if not group:
@@ -578,8 +584,35 @@ def build_pdf_report(
                      new_x="LMARGIN", new_y="NEXT")
             pdf.ln(4)
 
-            for c in group:
-                _draw_comment(pdf, c, show_video_tag=multi_video)
+            # Cluster by theme within the sentiment group. Themes sorted by
+            # size desc; within each theme, comments sorted by likes desc (ties
+            # broken by positive sentiment rank).
+            theme_buckets: dict[str, list[dict]] = {}
+            for _c in group:
+                theme_buckets.setdefault(_c.get("theme", "General"), []).append(_c)
+            ordered_themes = sorted(
+                theme_buckets.keys(),
+                key=lambda t: (-len(theme_buckets[t]), t),
+            )
+            for theme_name in ordered_themes:
+                theme_cs = theme_buckets[theme_name]
+                theme_cs.sort(
+                    key=lambda c: (
+                        c.get("likes", 0),
+                        _sent_rank.get(c.get("sentiment_label"), 0),
+                    ),
+                    reverse=True,
+                )
+                if pdf.get_y() > pdf.h - 30:
+                    pdf.add_page()
+                pdf.set_x(14)
+                pdf.set_font("Lato", "B", 9)
+                pdf.set_text_color(107, 114, 128)
+                pdf.cell(0, 5, _safe(f"{theme_name.upper()} · {len(theme_cs)}"),
+                         new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(1)
+                for c in theme_cs:
+                    _draw_comment(pdf, c, show_video_tag=multi_video)
 
             pdf.ln(6)
 
@@ -590,6 +623,114 @@ def build_pdf_report(
              align="C", new_x="LMARGIN", new_y="NEXT")
 
     return bytes(pdf.output())
+
+
+def _draw_overall_summary_box(pdf: FPDF, counts: dict, total: int,
+                               sections: list[dict]):
+    """Draw the rounded-edge overall-summary box on the first PDF page.
+    Includes the overall sentiment bar plus two-column section one-liners."""
+    margin = 10
+    padding = 6
+    box_x = margin
+    box_w = pdf.w - 2 * margin
+
+    # Pre-measure content height so we can draw the box first
+    label_h = 5
+    bar_h = 7
+    bar_lbl_h = 5
+    oneliner_max_lines = 3
+
+    # Section one-liners — figure out the tallest column
+    col_gap = 6
+    col_w = (box_w - 2 * padding - col_gap) / max(1, min(2, len(sections))) \
+        if sections else box_w - 2 * padding
+    pdf.set_font("Lato", "I", 10)
+    oneliner_heights = []
+    for s in sections[:2]:
+        _text = s.get("one_liner") or "—"
+        _lines = pdf.multi_cell(col_w, 4.8, _safe(_text), split_only=True)
+        oneliner_heights.append(max(1, min(oneliner_max_lines, len(_lines))) * 4.8)
+    oneliner_h = max(oneliner_heights) if oneliner_heights else 0
+    section_header_h = 5
+
+    box_h = padding + label_h + bar_h + 2 + bar_lbl_h + 6 + \
+        section_header_h + oneliner_h + padding
+
+    box_y = pdf.get_y()
+    # Draw the rounded rectangle (fpdf2 supports round_corners)
+    pdf.set_draw_color(200, 200, 200)
+    pdf.set_fill_color(249, 250, 251)
+    pdf.set_line_width(0.25)
+    try:
+        pdf.rect(box_x, box_y, box_w, box_h, "DF",
+                 round_corners=True, corner_radius=3)
+    except TypeError:
+        pdf.rect(box_x, box_y, box_w, box_h, "DF")
+
+    # Header label
+    pdf.set_xy(box_x + padding, box_y + padding)
+    pdf.set_font("Lato", "", 8)
+    pdf.set_text_color(107, 114, 128)
+    pdf.cell(0, label_h, "OVERALL SENTIMENT", new_x="LMARGIN", new_y="NEXT")
+
+    # Sentiment bar (inset to box width)
+    pdf.set_x(box_x + padding)
+    _bar_y = pdf.get_y() + 1
+    _bar_w = box_w - 2 * padding
+    _x = box_x + padding
+    if total > 0:
+        for label in ["Positive", "Neutral", "Negative"]:
+            count = counts.get(label, 0)
+            pct = count / total
+            seg_w = _bar_w * pct
+            if seg_w < 1:
+                continue
+            r, g, b = _hex_to_rgb(SENTIMENT_COLORS[label])
+            pdf.set_fill_color(r, g, b)
+            pdf.rect(_x, _bar_y, seg_w, bar_h, "F")
+            if seg_w > 22:
+                pdf.set_xy(_x, _bar_y)
+                pdf.set_font("Lato", "B", 7)
+                if label == "Positive":
+                    pdf.set_text_color(26, 26, 26)
+                else:
+                    pdf.set_text_color(255, 255, 255)
+                pdf.cell(seg_w, bar_h, f"{count} ({pct:.0%})", align="C")
+            _x += seg_w
+    pdf.set_y(_bar_y + bar_h + 1)
+
+    # Sentiment labels under bar
+    _lbl_y = pdf.get_y()
+    _x = box_x + padding
+    pdf.set_font("Lato", "", 7)
+    for lbl in ["Positive", "Neutral", "Negative"]:
+        count = counts.get(lbl, 0)
+        pct = count / total if total else 0
+        seg_w = _bar_w * pct
+        if seg_w > 15:
+            sr, sg, sb = _hex_to_rgb(SENTIMENT_COLORS[lbl])
+            pdf.set_text_color(sr, sg, sb)
+            pdf.set_xy(_x, _lbl_y)
+            pdf.cell(seg_w, bar_lbl_h, lbl, align="C")
+        _x += seg_w
+    pdf.set_y(_lbl_y + bar_lbl_h + 4)
+
+    # Two-column section one-liners
+    _cols_y = pdf.get_y()
+    for i, s in enumerate(sections[:2]):
+        col_x = box_x + padding + i * (col_w + col_gap)
+        pdf.set_xy(col_x, _cols_y)
+        pdf.set_font("Lato", "B", 10)
+        pdf.set_text_color(0, 188, 231)  # cyan
+        pdf.cell(col_w, section_header_h, _safe(s.get("name", "")),
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.set_xy(col_x, pdf.get_y())
+        pdf.set_font("Lato", "I", 10)
+        pdf.set_text_color(55, 65, 81)
+        _text = s.get("one_liner") or "—"
+        pdf.multi_cell(col_w, 4.8, _safe(_text), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_y(box_y + box_h + 6)
 
 
 def _draw_sentiment_bar(pdf: FPDF, counts: dict, total: int):
@@ -780,6 +921,7 @@ def build_interactive_html_report(
                 "date": c.get("date", ""),
                 "sentiment_label": c.get("sentiment_label", "Neutral"),
                 "sentiment_score": c.get("sentiment_score", 0),
+                "theme": c.get("theme", "General"),
                 "video_id": c.get("video_id", ""),
                 "video_title": c.get("video_title", ""),
             })
@@ -948,6 +1090,11 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
   font-weight: 500; color: var(--cyan); background: #e0f7fc;
 }}
 .section-header {{ margin: 18px 0 8px; font-size: 14px; font-weight: 700; }}
+.theme-sub {{
+  margin: 14px 0 6px; padding: 4px 0; border-top: 1px solid #e5e7eb;
+  font-size: 11px; font-weight: 700; color: #6b7280; letter-spacing: 0.5px;
+  text-transform: uppercase;
+}}
 .controls-row {{ display: flex; gap: 16px; margin-bottom: 14px; font-size: 13px; color: var(--muted); }}
 .count-summary {{ font-size: 12px; color: var(--muted); margin-bottom: 10px; }}
 .no-results {{ padding: 30px; text-align: center; color: var(--muted); font-style: italic; }}
@@ -1134,10 +1281,10 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
         '</div>' +
         '<div class="filter-group"><label>Sort</label>' +
           '<select class="f-sort">' +
+            '<option value="likes-desc" selected>Likes (most)</option>' +
+            '<option value="likes-asc">Likes (fewest)</option>' +
             '<option value="date-desc">Date (newest)</option>' +
             '<option value="date-asc">Date (oldest)</option>' +
-            '<option value="likes-desc">Likes (most)</option>' +
-            '<option value="likes-asc">Likes (fewest)</option>' +
           '</select>' +
         '</div>' +
         '<div class="filter-group">' +
@@ -1151,8 +1298,9 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
 
     const state = {{
       sentiments: new Set(['Positive', 'Neutral', 'Negative']),
-      lang: '', minLikes: 0, search: '', sort: 'date-desc',
+      lang: '', minLikes: 0, search: '', sort: 'likes-desc',
     }};
+    const SENT_RANK = {{Positive: 2, Neutral: 1, Negative: 0}};
     const host = panel.querySelector('.comments-host');
     const countEl = panel.querySelector('.count-summary');
 
@@ -1172,7 +1320,12 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
       filtered.sort((a, b) => {{
         let av = field === 'date' ? (a.date || '') : (a.likes || 0);
         let bv = field === 'date' ? (b.date || '') : (b.likes || 0);
-        return dir === 'asc' ? (av < bv ? -1 : av > bv ? 1 : 0) : (av < bv ? 1 : av > bv ? -1 : 0);
+        let cmp = av < bv ? -1 : av > bv ? 1 : 0;
+        if (cmp === 0) {{
+          // Tie-break on sentiment rank (most positive first when likes tie)
+          cmp = (SENT_RANK[a.sentiment_label] || 0) - (SENT_RANK[b.sentiment_label] || 0);
+        }}
+        return dir === 'asc' ? cmp : -cmp;
       }});
 
       countEl.textContent = 'Showing ' + filtered.length.toLocaleString() + ' of '
@@ -1182,7 +1335,7 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
         host.innerHTML = '<div class="no-results">No comments match the current filters.</div>';
         return;
       }}
-      // Group by sentiment for the output (preserves sort order within each group)
+      // Group by sentiment, then cluster by theme within each sentiment
       let out = '';
       for (const lbl of ['Positive', 'Neutral', 'Negative']) {{
         const grp = filtered.filter(c => c.sentiment_label === lbl);
@@ -1190,7 +1343,22 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
         const emoji = {{Positive:'😊', Negative:'😞', Neutral:'😐'}}[lbl];
         out += '<div class="section-header" style="color:' + DATA.sentiment_colors[lbl] + ';">' +
                emoji + ' ' + lbl + ' (' + grp.length + ')</div>';
-        out += grp.map(renderCard).join('');
+        // Bucket by theme, keeping within-theme sort order from filtered
+        const themeBuckets = {{}};
+        for (const c of grp) {{
+          const t = c.theme || 'General';
+          if (!themeBuckets[t]) themeBuckets[t] = [];
+          themeBuckets[t].push(c);
+        }}
+        const orderedThemes = Object.keys(themeBuckets).sort(
+          (a, b) => themeBuckets[b].length - themeBuckets[a].length || a.localeCompare(b)
+        );
+        for (const themeName of orderedThemes) {{
+          const bucket = themeBuckets[themeName];
+          out += '<div class="theme-sub">' + escapeHTML(themeName) +
+                 ' <span style="color:#9ca3af;font-weight:500;">(' + bucket.length + ')</span></div>';
+          out += bucket.map(renderCard).join('');
+        }}
       }}
       host.innerHTML = out;
     }}
