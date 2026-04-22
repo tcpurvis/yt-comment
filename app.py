@@ -1440,6 +1440,10 @@ def main():
             _alo = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
             _ald = [LANGUAGE_NAMES.get(lc, lc) for lc in _alo]
             _n2c_t = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _alo}
+            # Live selection counter — created inside the fragment so it can
+            # be updated on every checkbox-toggle rerun (a placeholder created
+            # outside the fragment can't be written to from within).
+            _live_count_slot = st.empty()
 
             _groups = {}
             _sent_rank = {"Positive": 2, "Neutral": 1, "Negative": 0}
@@ -1617,9 +1621,9 @@ def main():
 
             st.session_state["hidden_ids"] = _hidden_f
             st.session_state["_bulk_selected"] = _bsel_f
-            # Update the sidebar counter (only takes effect on full reruns
-            # since fragment-scope reruns don't re-render the sidebar).
-            _bulk_count_slot.caption(f"**{len(_bsel_f)}** selected")
+            _live_count_slot.caption(
+                f"**{len(_bsel_f)}** comment{'s' if len(_bsel_f) != 1 else ''} selected"
+            )
 
         def _render_custom_search_tab(raw_comments, sq, _title_slug, _export_ts, hidden_ids, bulk_selected):
             st.caption("Search any keywords across ALL raw comments (not limited to Subtitles or Dubbing matches).")
