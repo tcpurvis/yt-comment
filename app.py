@@ -1263,13 +1263,30 @@ def main():
             _ai_cs = st.session_state.get("ai_summary_custom", "")
             _cs_vis = [c for c in _results if c["_id"] not in hidden_ids]
             if _cs_vis:
-                if st.button("Generate AI Summary", key="gen_ai_custom", type="secondary"):
+                _btn_label_cs = "Regenerate AI Summary" if _ai_cs else "Generate AI Summary"
+                if st.button(_btn_label_cs, key="gen_ai_custom", type="secondary"):
                     with st.spinner("Generating summary..."):
                         _ai_cs = generate_ai_summary(_cs_vis, sq)
                         st.session_state["ai_summary_custom"] = _ai_cs
+                        st.session_state["ai_edit_custom"] = _ai_cs
+                        st.rerun()
                 if _ai_cs:
                     with st.expander("**Summary**", expanded=True):
-                        st.markdown(_ai_cs, unsafe_allow_html=True)
+                        _pv_cs, _ed_cs = st.tabs(["Preview", "Edit"])
+                        if "ai_edit_custom" not in st.session_state:
+                            st.session_state["ai_edit_custom"] = _ai_cs
+                        with _ed_cs:
+                            _edited_cs = st.text_area(
+                                "Edit (supports **bold**, *italic*, <u>underline</u>)",
+                                height=200,
+                                key="ai_edit_custom",
+                                label_visibility="collapsed",
+                            )
+                            if _edited_cs != _ai_cs:
+                                st.session_state["ai_summary_custom"] = _edited_cs
+                                _ai_cs = _edited_cs
+                        with _pv_cs:
+                            st.markdown(_ai_cs, unsafe_allow_html=True)
 
             # Clear button
             if st.button("Clear search results", key="clear_custom_search"):
@@ -1398,13 +1415,31 @@ def main():
                 _ai_sum = st.session_state.get(_ai_key, "")
                 _vis = [c for c in _tab_comments if c["_id"] not in hidden_ids]
                 if _vis:
-                    if st.button("Generate AI Summary", key=f"gen_ai_{tab_idx}", type="secondary"):
+                    _btn_label = "Regenerate AI Summary" if _ai_sum else "Generate AI Summary"
+                    if st.button(_btn_label, key=f"gen_ai_{tab_idx}", type="secondary"):
                         with st.spinner(f"Generating summary for {_tab_name}..."):
                             _ai_sum = generate_ai_summary(_vis, sq)
                             st.session_state[_ai_key] = _ai_sum
+                            st.session_state[f"ai_edit_{tab_idx}"] = _ai_sum
+                            st.rerun()
                     if _ai_sum:
-                        with st.expander(f"**Summary**", expanded=True):
-                            st.markdown(_ai_sum, unsafe_allow_html=True)
+                        with st.expander("**Summary**", expanded=True):
+                            _pv_tab, _ed_tab = st.tabs(["Preview", "Edit"])
+                            _ed_key = f"ai_edit_{tab_idx}"
+                            if _ed_key not in st.session_state:
+                                st.session_state[_ed_key] = _ai_sum
+                            with _ed_tab:
+                                _edited = st.text_area(
+                                    "Edit (supports **bold**, *italic*, <u>underline</u>)",
+                                    height=200,
+                                    key=_ed_key,
+                                    label_visibility="collapsed",
+                                )
+                                if _edited != _ai_sum:
+                                    st.session_state[_ai_key] = _edited
+                                    _ai_sum = _edited
+                            with _pv_tab:
+                                st.markdown(_ai_sum, unsafe_allow_html=True)
 
                 # Apply sidebar filters to this tab's comments
                 _filtered_tab = _tab_comments
