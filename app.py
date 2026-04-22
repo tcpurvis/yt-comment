@@ -754,7 +754,11 @@ def main():
     # --- Fetch stats in sidebar ---
     total_raw = len(raw_comments)
     st.sidebar.header("Fetch Stats")
-    st.sidebar.metric("Total Comments", f"{total_raw:,}")
+    _multi_a = st.session_state.get("multi_analyses")
+    _match_total = sum(len(m["comments"]) for m in _multi_a) if _multi_a else 0
+    _fs1, _fs2 = st.sidebar.columns(2)
+    _fs1.metric("Total Comments", f"{total_raw:,}")
+    _fs2.metric("Keyword Matches", f"{_match_total:,}")
     video_titles = sorted(set(c.get("video_title", "") for c in raw_comments))
     for vt in video_titles:
         v_count = sum(1 for c in raw_comments if c.get("video_title") == vt)
