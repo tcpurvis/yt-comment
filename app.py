@@ -356,6 +356,18 @@ def main():
             _payload_h["ai_summary"] = st.session_state.get("ai_summary", "")
         if st.session_state.get("multi_analyses"):
             _payload_h["multi_analyses"] = st.session_state["multi_analyses"]
+        # Custom search state
+        if st.session_state.get("custom_search_results"):
+            _payload_h["custom_search_results"] = st.session_state["custom_search_results"]
+            _payload_h["custom_search_keywords"] = st.session_state.get("custom_search_keywords", [])
+            _payload_h["custom_search_exclude"] = st.session_state.get("custom_search_exclude", [])
+        # Per-tab AI summaries
+        _tab_summaries = {}
+        for _k in list(st.session_state.keys()):
+            if _k.startswith("ai_summary_") and _k not in ("ai_summary_edit",):
+                _tab_summaries[_k] = st.session_state[_k]
+        if _tab_summaries:
+            _payload_h["tab_summaries"] = _tab_summaries
 
         _data_h = json.dumps(_payload_h, ensure_ascii=False).encode("utf-8")
         st.sidebar.download_button(
@@ -419,22 +431,42 @@ def main():
                     st.session_state["_last_upload_id"] = upload_id
 
                     # Restore analysis state if saved in the export
+                    st.session_state["hidden_ids"] = set(data.get("hidden_ids", []))
                     if "analyzed_comments" in data:
                         st.session_state["analyzed_comments"] = data["analyzed_comments"]
-                        st.session_state["hidden_ids"] = set(data.get("hidden_ids", []))
                         st.session_state["keywords"] = data.get("keywords", [])
                         if data.get("preset"):
                             st.session_state["keyword_preset"] = data["preset"]
                         if data.get("ai_summary"):
                             st.session_state["ai_summary"] = data["ai_summary"]
-                        st.success(
-                            f"Restored session: **{len(data['comments']):,}** raw comments, "
-                            f"**{len(data['analyzed_comments']):,}** analyzed."
-                        )
                     else:
                         st.session_state.pop("analyzed_comments", None)
-                        st.session_state.pop("hidden_ids", None)
-                        st.success(f"Loaded **{len(data['comments']):,}** comments.")
+
+                    # Restore multi-analysis tabs (Subtitles & Dubs)
+                    if "multi_analyses" in data:
+                        st.session_state["multi_analyses"] = data["multi_analyses"]
+                    else:
+                        st.session_state["multi_analyses"] = None
+
+                    # Restore custom search results
+                    if "custom_search_results" in data:
+                        st.session_state["custom_search_results"] = data["custom_search_results"]
+                        st.session_state["custom_search_keywords"] = data.get("custom_search_keywords", [])
+                        st.session_state["custom_search_exclude"] = data.get("custom_search_exclude", [])
+
+                    # Restore per-tab AI summaries
+                    for _k, _v in data.get("tab_summaries", {}).items():
+                        st.session_state[_k] = _v
+
+                    _has_multi = data.get("multi_analyses") is not None and len(data.get("multi_analyses", [])) > 0
+                    _has_custom = bool(data.get("custom_search_results"))
+                    _parts = []
+                    if _has_multi:
+                        _parts.append(f"{sum(len(m['comments']) for m in data['multi_analyses']):,} analyzed")
+                    if _has_custom:
+                        _parts.append(f"{len(data['custom_search_results']):,} custom search")
+                    _detail = f" ({', '.join(_parts)})" if _parts else ""
+                    st.success(f"Loaded **{len(data['comments']):,}** raw comments{_detail}.")
                 except Exception as e:
                     st.error(f"Failed to load file: {e}")
 
@@ -1195,12 +1227,246 @@ def main():
                 st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
                 st.rerun()
 
-        tab_names = [r["name"] for r in multi_analyses]
+        # Define custom search renderer (runs on raw comments)
+        # Comment cards in fragment to prevent full rerun on checkbox
+        @st.fragment
+        def _render_tab_cards(_comments, _tidx):
+            _hidden_f = st.session_state.get("hidden_ids", set())
+            _bsel_f = st.session_state.get("_bulk_selected", set())
+            _alo = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
+            _ald = [LANGUAGE_NAMES.get(lc, lc) for lc in _alo]
+            _n2c_t = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _alo}
+
+            _groups = {}
+            for _lbl in ["Positive", "Neutral", "Negative"]:
+                _grp = [c for c in _comments if c["sentiment_label"] == _lbl]
+                if _grp:
+                    _groups[_lbl] = _grp
+
+            for _lbl, _grp_c in _groups.items():
+                _emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[_lbl]
+                with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=False):
+                    for c in _grp_c:
+                        cid = c["_id"]
+                        _is_skipped = cid in _hidden_f
+
+                        _av_bg = _avatar_color(c["author"])
+                        _ini = _initials(c["author"])
+                        _ds = _format_date(c["date"])
+                        _sb = _sentiment_badge(c["sentiment_label"])
+                        _op = "0.35" if _is_skipped else "1"
+                        _ct = html_mod.escape(c["comment"])
+                        _at = html_mod.escape(c["author"])
+
+                        _lc = c.get("matched_language", "en")
+                        _lt = ""
+                        if _lc not in ("en", "all"):
+                            _ll = LANGUAGE_NAMES.get(_lc, _lc)
+                            _lt = (f'<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
+                                   f'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-left:6px;">{_ll}</span>')
+
+                        _rt = ""
+                        if c.get("is_reply"):
+                            _rt = ('<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
+                                   'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-right:6px;">↩ reply</span>')
+
+                        _tr = ""
+                        if c.get("back_translation") and c.get("original_language"):
+                            _bt = html_mod.escape(c["back_translation"])
+                            _tr = (f'<div style="margin-top:4px;padding:4px 8px;background:#f0f4ff;'
+                                   f'border-left:2px solid #00BCE7;border-radius:3px;font-size:12px;'
+                                   f'color:#4a5568;font-style:italic;">🌐 {_bt}</div>')
+
+                        # Single row: checkbox | card | skip | lang
+                        _tc1, _tc2, _tc3, _tc4 = st.columns([0.03, 0.77, 0.07, 0.13], vertical_alignment="top")
+                        _sver_t = st.session_state.get("_sel_version", 0)
+                        with _tc1:
+                            _sel = st.checkbox("s", value=(cid in _bsel_f),
+                                               key=f"sel_{_tidx}_{cid}_v{_sver_t}", label_visibility="collapsed")
+                            if _sel:
+                                _bsel_f.add(cid)
+                            else:
+                                _bsel_f.discard(cid)
+                        with _tc2:
+                            st.html(f"""
+                            <div style="display:flex;gap:8px;opacity:{_op};align-items:flex-start;">
+                              <div style="flex-shrink:0;width:28px;height:28px;border-radius:50%;
+                                          background:{_av_bg};display:flex;align-items:center;
+                                          justify-content:center;color:#fff;font-weight:700;font-size:11px;">
+                                {_ini}
+                              </div>
+                              <div style="flex:1;min-width:0;">
+                                <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+                                  {_rt}
+                                  <span style="font-weight:600;font-size:12px;color:#030303;">{_at}</span>
+                                  <span style="font-size:10px;color:#909090;">{_ds}</span>
+                                  {_sb}{_lt}
+                                  {f'<span style="color:#909090;font-size:10px;">👍{c["likes"]}</span>' if c.get("likes", 0) > 0 else ''}
+                                </div>
+                                <div style="margin-top:2px;font-size:13px;color:#030303;line-height:1.3;">{_ct}</div>
+                                {_tr}
+                              </div>
+                            </div>
+                            """)
+                        with _tc3:
+                            if not _is_skipped:
+                                if st.button("Skip", key=f"skip_{_tidx}_{cid}"):
+                                    _hidden_f.add(cid)
+                            else:
+                                if st.button("Incl", key=f"inc_{_tidx}_{cid}"):
+                                    _hidden_f.discard(cid)
+                        with _tc4:
+                            _clc = c.get("matched_language", "en")
+                            _cld = LANGUAGE_NAMES.get(_clc, _clc)
+                            _mlk = f"lang_{_tidx}_{cid}"
+                            if _mlk not in st.session_state:
+                                st.session_state[_mlk] = _cld
+                            _nld = st.selectbox("L", options=_ald, key=_mlk, label_visibility="collapsed")
+                            _nlc = _n2c_t.get(_nld, _clc)
+                            if _nlc != c.get("matched_language", "en"):
+                                c["matched_language"] = _nlc
+
+            st.session_state["hidden_ids"] = _hidden_f
+            st.session_state["_bulk_selected"] = _bsel_f
+
+        def _render_custom_search_tab(raw_comments, sq, _title_slug, _export_ts, hidden_ids, bulk_selected):
+            st.caption("Search any keywords across ALL raw comments (not limited to Subtitles or Dubbing matches).")
+
+            _cs_c1, _cs_c2 = st.columns(2)
+            with _cs_c1:
+                _cs_kw_input = st.text_input(
+                    "Keywords (comma-separated)",
+                    placeholder="e.g. lighting, audio, editing",
+                    key="custom_kw_input",
+                )
+            with _cs_c2:
+                _cs_excl_input = st.text_input(
+                    "Exclude (comma-separated)",
+                    placeholder="e.g. spam, bot",
+                    key="custom_excl_input",
+                )
+
+            _cs_kw = [k.strip() for k in _cs_kw_input.split(",") if k.strip()]
+            _cs_excl = [k.strip() for k in _cs_excl_input.split(",") if k.strip()]
+
+            if st.button("Search", type="primary", key="custom_search_run"):
+                if not _cs_kw:
+                    st.warning("Enter at least one keyword.")
+                else:
+                    with st.spinner(f"Searching {len(raw_comments):,} comments..."):
+                        pat = _build_keyword_pattern(_cs_kw)
+                        excl_pat = _build_keyword_pattern(_cs_excl)
+                        matched = []
+                        if pat:
+                            for c in raw_comments:
+                                text = c["comment"]
+                                if not pat.search(text):
+                                    continue
+                                if excl_pat and excl_pat.search(text):
+                                    continue
+                                copy = dict(c)
+                                detected = detect_language(c["comment"])
+                                copy["matched_language"] = detected
+                                if detected != "en":
+                                    copy["original_language"] = detected
+                                matched.append(copy)
+
+                        if matched:
+                            add_sentiment(matched)
+                            cluster_into_themes(matched)
+                            for idx, c in enumerate(matched):
+                                c["_id"] = f"cs_{idx}"
+
+                            st.session_state["custom_search_results"] = matched
+                            st.session_state["custom_search_keywords"] = _cs_kw
+                            st.session_state["custom_search_exclude"] = _cs_excl
+                            st.session_state.pop("ai_summary_custom", None)
+                            st.rerun()
+                        else:
+                            st.warning("No matches found.")
+
+            # Show existing results
+            _results = st.session_state.get("custom_search_results", [])
+            if not _results:
+                st.info("Enter keywords and click Search to filter raw comments.")
+                return
+
+            st.subheader(f"Custom Search — {len(_results):,} comments")
+
+            # Sentiment bar
+            _cs_sc = get_sentiment_counts(_results)
+            _cs_total = len(_results)
+            _cs_bar = ""
+            for _lbl in ["Positive", "Neutral", "Negative"]:
+                _cnt = _cs_sc.get(_lbl, 0)
+                _pct_v = _cnt / _cs_total * 100 if _cs_total else 0
+                _clr = SENTIMENT_COLORS[_lbl]
+                _tc = "#1a1a1a" if _lbl == "Positive" else "#fff"
+                if _pct_v > 0:
+                    _cs_bar += (
+                        f'<div style="flex:{_pct_v};background:{_clr};height:32px;'
+                        f'display:flex;align-items:center;justify-content:center;'
+                        f'color:{_tc};font-size:12px;font-weight:600;'
+                        f'min-width:{40 if _pct_v > 3 else 0}px;">'
+                        f'{_cnt} ({_pct_v:.0f}%)</div>'
+                    )
+            st.html(f'<div style="display:flex;border-radius:12px;overflow:hidden;margin:8px 0 16px 0;">{_cs_bar}</div>')
+
+            # AI Summary
+            _ai_cs = st.session_state.get("ai_summary_custom", "")
+            _cs_vis = [c for c in _results if c["_id"] not in hidden_ids]
+            if _cs_vis:
+                if st.button("Generate AI Summary", key="gen_ai_custom", type="secondary"):
+                    with st.spinner("Generating summary..."):
+                        _ai_cs = generate_ai_summary(_cs_vis, sq)
+                        st.session_state["ai_summary_custom"] = _ai_cs
+                if _ai_cs:
+                    with st.expander("**Summary**", expanded=True):
+                        st.markdown(_ai_cs, unsafe_allow_html=True)
+
+            # Clear button
+            if st.button("Clear search results", key="clear_custom_search"):
+                st.session_state.pop("custom_search_results", None)
+                st.session_state.pop("custom_search_keywords", None)
+                st.session_state.pop("custom_search_exclude", None)
+                st.session_state.pop("ai_summary_custom", None)
+                st.rerun()
+
+            # Render comment cards (reuse tab renderer)
+            _render_tab_cards(_results, "custom")
+
+            # PDF export for this search
+            if _cs_vis:
+                _cs_pdf = build_pdf_report(
+                    _cs_vis, sq, _cs_kw,
+                    ai_summary=_ai_cs,
+                    preset_name=f"Custom: {', '.join(_cs_kw[:3])}",
+                )
+                st.download_button(
+                    label="Download Custom Search PDF",
+                    data=_cs_pdf,
+                    file_name=f"{_title_slug}_{_export_ts}_custom.pdf",
+                    mime="application/pdf",
+                )
+
+        tab_names = [r["name"] for r in multi_analyses] + ["Custom Search"]
         tabs = st.tabs(tab_names)
+        _custom_tab_idx = len(tab_names) - 1
         # We render the full view inside each tab
-        # Use session state to track which tab's data to show
         for tab_idx, tab_obj in enumerate(tabs):
             with tab_obj:
+                # Custom Search tab (last one)
+                if tab_idx == _custom_tab_idx:
+                    _render_custom_search_tab(
+                        raw_comments=raw_comments,
+                        sq=sq,
+                        _title_slug=_title_slug,
+                        _export_ts=_export_ts,
+                        hidden_ids=hidden_ids,
+                        bulk_selected=bulk_selected,
+                    )
+                    continue
+
                 _tab_comments = multi_analyses[tab_idx]["comments"]
                 _tab_name = tab_names[tab_idx]
                 if not _tab_comments:
@@ -1282,106 +1548,6 @@ def main():
 
                 st.caption(f"Showing **{len(_filtered_tab):,}** comments")
 
-                # Comment cards in fragment to prevent full rerun on checkbox
-                @st.fragment
-                def _render_tab_cards(_comments, _tidx):
-                    _hidden_f = st.session_state.get("hidden_ids", set())
-                    _bsel_f = st.session_state.get("_bulk_selected", set())
-                    _alo = ["en"] + sorted(set(SUPPORTED_LANGUAGES.values()))
-                    _ald = [LANGUAGE_NAMES.get(lc, lc) for lc in _alo]
-                    _n2c_t = {LANGUAGE_NAMES.get(lc, lc): lc for lc in _alo}
-
-                    _groups = {}
-                    for _lbl in ["Positive", "Neutral", "Negative"]:
-                        _grp = [c for c in _comments if c["sentiment_label"] == _lbl]
-                        if _grp:
-                            _groups[_lbl] = _grp
-
-                    for _lbl, _grp_c in _groups.items():
-                        _emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[_lbl]
-                        with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=False):
-                            for c in _grp_c:
-                                cid = c["_id"]
-                                _is_skipped = cid in _hidden_f
-
-                                _av_bg = _avatar_color(c["author"])
-                                _ini = _initials(c["author"])
-                                _ds = _format_date(c["date"])
-                                _sb = _sentiment_badge(c["sentiment_label"])
-                                _op = "0.35" if _is_skipped else "1"
-                                _ct = html_mod.escape(c["comment"])
-                                _at = html_mod.escape(c["author"])
-
-                                _lc = c.get("matched_language", "en")
-                                _lt = ""
-                                if _lc not in ("en", "all"):
-                                    _ll = LANGUAGE_NAMES.get(_lc, _lc)
-                                    _lt = (f'<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
-                                           f'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-left:6px;">{_ll}</span>')
-
-                                _rt = ""
-                                if c.get("is_reply"):
-                                    _rt = ('<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
-                                           'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-right:6px;">↩ reply</span>')
-
-                                _tr = ""
-                                if c.get("back_translation") and c.get("original_language"):
-                                    _bt = html_mod.escape(c["back_translation"])
-                                    _tr = (f'<div style="margin-top:4px;padding:4px 8px;background:#f0f4ff;'
-                                           f'border-left:2px solid #00BCE7;border-radius:3px;font-size:12px;'
-                                           f'color:#4a5568;font-style:italic;">🌐 {_bt}</div>')
-
-                                # Single row: checkbox | card | skip | lang
-                                _tc1, _tc2, _tc3, _tc4 = st.columns([0.03, 0.77, 0.07, 0.13], vertical_alignment="top")
-                                _sver_t = st.session_state.get("_sel_version", 0)
-                                with _tc1:
-                                    _sel = st.checkbox("s", value=(cid in _bsel_f),
-                                                       key=f"sel_{_tidx}_{cid}_v{_sver_t}", label_visibility="collapsed")
-                                    if _sel:
-                                        _bsel_f.add(cid)
-                                    else:
-                                        _bsel_f.discard(cid)
-                                with _tc2:
-                                    st.html(f"""
-                                    <div style="display:flex;gap:8px;opacity:{_op};align-items:flex-start;">
-                                      <div style="flex-shrink:0;width:28px;height:28px;border-radius:50%;
-                                                  background:{_av_bg};display:flex;align-items:center;
-                                                  justify-content:center;color:#fff;font-weight:700;font-size:11px;">
-                                        {_ini}
-                                      </div>
-                                      <div style="flex:1;min-width:0;">
-                                        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
-                                          {_rt}
-                                          <span style="font-weight:600;font-size:12px;color:#030303;">{_at}</span>
-                                          <span style="font-size:10px;color:#909090;">{_ds}</span>
-                                          {_sb}{_lt}
-                                          {f'<span style="color:#909090;font-size:10px;">👍{c["likes"]}</span>' if c.get("likes", 0) > 0 else ''}
-                                        </div>
-                                        <div style="margin-top:2px;font-size:13px;color:#030303;line-height:1.3;">{_ct}</div>
-                                        {_tr}
-                                      </div>
-                                    </div>
-                                    """)
-                                with _tc3:
-                                    if not _is_skipped:
-                                        if st.button("Skip", key=f"skip_{_tidx}_{cid}"):
-                                            _hidden_f.add(cid)
-                                    else:
-                                        if st.button("Incl", key=f"inc_{_tidx}_{cid}"):
-                                            _hidden_f.discard(cid)
-                                with _tc4:
-                                    _clc = c.get("matched_language", "en")
-                                    _cld = LANGUAGE_NAMES.get(_clc, _clc)
-                                    _mlk = f"lang_{_tidx}_{cid}"
-                                    if _mlk not in st.session_state:
-                                        st.session_state[_mlk] = _cld
-                                    _nld = st.selectbox("L", options=_ald, key=_mlk, label_visibility="collapsed")
-                                    _nlc = _n2c_t.get(_nld, _clc)
-                                    if _nlc != c.get("matched_language", "en"):
-                                        c["matched_language"] = _nlc
-
-                    st.session_state["hidden_ids"] = _hidden_f
-                    st.session_state["_bulk_selected"] = _bsel_f
 
                 _render_tab_cards(_filtered_tab, tab_idx)
 
