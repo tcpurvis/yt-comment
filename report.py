@@ -1029,9 +1029,27 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
 .sent-tag.pos {{ background: #1CE8B5; color: #033d33; }}
 .sent-tag.neg {{ background: #FF5E5B; color: #5a1111; }}
 .sent-tag.neu {{ background: #C94EFF; color: #2e0b3d; }}
-.sent-bar {{ display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin-bottom: 14px; }}
+.sent-bar {{ display: flex; height: 26px; border-radius: 6px; overflow: hidden; margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08); }}
 .sent-bar > div {{ display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 10px; font-weight: 700; }}
+  color: #fff; font-size: 13px; font-weight: 700; letter-spacing: 0.3px; }}
+.sent-bar-labels {{ display: flex; font-size: 11px; font-weight: 600; color: var(--muted);
+  margin-top: -10px; margin-bottom: 10px; }}
+.overall-box {{
+  border: 1px solid var(--border); border-radius: 12px; background: #f9fafb;
+  padding: 16px 20px; margin: 18px 0 6px;
+}}
+.overall-box h3 {{
+  font-size: 11px; font-weight: 700; color: var(--muted);
+  letter-spacing: 0.6px; text-transform: uppercase; margin-bottom: 10px;
+}}
+.overall-cols {{ display: flex; gap: 16px; margin-top: 10px; }}
+.overall-col {{ flex: 1; min-width: 0; }}
+.overall-col h4 {{
+  color: var(--cyan); font-size: 14px; font-weight: 700; margin-bottom: 4px;
+}}
+.overall-col p {{ font-size: 14px; color: #4b5563; font-style: italic; margin: 0; }}
+@media (max-width: 620px) {{ .overall-cols {{ flex-direction: column; }} }}
 .filters {{
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
   padding: 12px; background: #f9fafb; border-radius: 8px;
@@ -1106,6 +1124,8 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
   <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
 </div>
 <div class="meta" id="meta"></div>
+
+<div id="overall-summary"></div>
 
 <div class="tabs" id="tabs"></div>
 <div id="panels"></div>
@@ -1234,6 +1254,24 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
   document.getElementById('meta').textContent =
     'Generated ' + DATA.generated_at + ' · ' + DATA.total_comments.toLocaleString() + ' total comments';
 
+  // ----- Overall summary: per-section one-liners, always visible -----
+  const overallEl = document.getElementById('overall-summary');
+  const overallCols = DATA.sections
+    .filter(s => s.one_liner)
+    .map(s =>
+      '<div class="overall-col">' +
+        '<h4>' + escapeHTML(s.name) + '</h4>' +
+        '<p>' + escapeHTML(s.one_liner) + '</p>' +
+      '</div>'
+    ).join('');
+  if (overallCols) {{
+    overallEl.innerHTML =
+      '<div class="overall-box">' +
+        '<h3>Section Summaries</h3>' +
+        '<div class="overall-cols">' + overallCols + '</div>' +
+      '</div>';
+  }}
+
   // ----- Tabs -----
   const tabsEl = document.getElementById('tabs');
   const panelsEl = document.getElementById('panels');
@@ -1264,13 +1302,13 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
       .concat(langs.map(l => '<option value="' + l + '">' + langName(l) + '</option>'))
       .join('');
 
-    const oneLinerHTML = sec.one_liner
-      ? '<div class="one-liner">' + escapeHTML(sec.one_liner) + '</div>' : '';
+    // One-liner is shown in the always-visible overall summary at the top of
+    // the page, so it's omitted here to avoid duplication.
     const aiSummaryHTML = sec.ai_summary
       ? '<div class="ai-summary">' + renderAISummary(sec.ai_summary) + '</div>' : '';
 
     panel.innerHTML =
-      oneLinerHTML + aiSummaryHTML + sentimentBar(counts) +
+      sentimentBar(counts) + aiSummaryHTML +
       '<div class="filters">' +
         '<input type="text" class="f-search" placeholder="Search within comments…">' +
         '<div class="filter-group"><label>Lang</label>' +
