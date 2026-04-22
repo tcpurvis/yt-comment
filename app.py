@@ -149,37 +149,6 @@ def _api_call_with_retry(request, max_retries: int = 3):
             raise
 
 
-def fetch_replies(youtube, parent_id: str, video_id: str) -> list[dict]:
-    """Fetch all replies for a top-level comment with retries."""
-    replies = []
-    request = youtube.comments().list(
-        part="snippet",
-        parentId=parent_id,
-        maxResults=100,
-        textFormat="plainText",
-    )
-    while request:
-        try:
-            response = _api_call_with_retry(request)
-        except Exception:
-            break
-        for item in response.get("items", []):
-            s = item["snippet"]
-            replies.append(
-                {
-                    "author": s["authorDisplayName"],
-                    "comment": s["textDisplay"],
-                    "likes": s["likeCount"],
-                    "replies": 0,
-                    "date": s["publishedAt"],
-                    "video_id": s.get("videoId", video_id),
-                    "is_reply": True,
-                    "parent_id": parent_id,
-                }
-            )
-        request = youtube.comments().list_next(request, response)
-    return replies
-
 
 def fetch_comments(
     youtube, video_id: str, max_comments: int | None = None,
@@ -471,53 +440,7 @@ def main():
                 except Exception as e:
                     st.error(f"Failed to load file: {e}")
 
-        # Reprocess option — re-runs keyword matching, language detection, sentiment
-        if "raw_comments" in st.session_state:
-            if st.button("Reprocess analysis (re-match keywords, detect languages, analyze sentiment)", key="reprocess_btn"):
-                _raw = st.session_state["raw_comments"]
-
-                # Preserve manual overrides from existing results
-                _overrides: dict[str, dict] = {}  # keyed by comment_id
-                for _src in [st.session_state.get("multi_analyses"), [{"comments": st.session_state.get("analyzed_comments", [])}]]:
-                    if not _src:
-                        continue
-                    for _ma in _src:
-                        if not isinstance(_ma, dict):
-                            continue
-                        for c in _ma.get("comments", []):
-                            cid = c.get("comment_id", "")
-                            if not cid:
-                                continue
-                            override = {}
-                            if c.get("sentiment_override"):
-                                override["sentiment_label"] = c["sentiment_label"]
-                            if c.get("back_translation") and c["back_translation"] != c["comment"]:
-                                override["back_translation"] = c["back_translation"]
-                                override["original_language"] = c.get("original_language", "")
-                            _overrides[cid] = override
-
-                with st.spinner("Reprocessing..."):
-                    _auto_run_subtitles_dubs(_raw, st.session_state.get("search_query", ""))
-
-                # Re-apply manual overrides
-                _multi = st.session_state.get("multi_analyses", [])
-                _applied = 0
-                for _ma in (_multi or []):
-                    for c in _ma.get("comments", []):
-                        cid = c.get("comment_id", "")
-                        if cid in _overrides:
-                            ov = _overrides[cid]
-                            if "sentiment_label" in ov:
-                                c["sentiment_label"] = ov["sentiment_label"]
-                                c["sentiment_override"] = True
-                            if "back_translation" in ov:
-                                c["back_translation"] = ov["back_translation"]
-                                c["original_language"] = ov["original_language"]
-                            _applied += 1
-
-                if _applied:
-                    st.success(f"Reprocessed. Preserved **{_applied}** manual overrides.")
-                st.rerun()
+        # (Reprocess button moved after function definitions below)
 
     elif input_mode == "Paste video URLs":
         url_input = st.text_area(
@@ -563,11 +486,7 @@ def main():
             else:
                 max_scan = None
         with fetch_col2:
-            include_replies = st.checkbox(
-                "Include replies",
-                help="Fetch replies under each top-level comment. Uses 1 additional API call "
-                     "per top-level comment that has replies.",
-            )
+            pass  # fetch settings column
 
     # Quota estimate (inline, only for fetch modes)
     if input_mode not in ("Upload previous export", "Update existing export"):
@@ -770,31 +689,6 @@ def main():
                     f"({len(raw_comments):,} total)"
                 )
 
-            # Pass 2: Fetch replies (separate pass so failures don't break main fetch)
-            if include_replies and not st.session_state.get("_stop_fetch"):
-                comments_with_replies = [c for c in raw_comments if c.get("replies", 0) > 0]
-                if comments_with_replies:
-                    reply_counter = status.empty()
-                    total_replies = 0
-                    failed_replies = 0
-                    for j, c in enumerate(comments_with_replies):
-                        if st.session_state.get("_stop_fetch"):
-                            break
-                        try:
-                            replies = fetch_replies(youtube, c["comment_id"], c["video_id"])
-                            for r in replies:
-                                r["video_title"] = c.get("video_title", "")
-                            raw_comments.extend(replies)
-                            total_replies += len(replies)
-                        except Exception:
-                            failed_replies += 1
-                        if (j + 1) % 10 == 0 or j == len(comments_with_replies) - 1:
-                            reply_counter.markdown(
-                                f"Replies: {total_replies:,} fetched from "
-                                f"{j + 1:,}/{len(comments_with_replies):,} threads"
-                                f"{f' ({failed_replies} failed)' if failed_replies else ''}"
-                            )
-
         except HttpError as e:
             reason = e.error_details[0]["reason"] if e.error_details else str(e)
             if raw_comments:
@@ -857,30 +751,15 @@ def main():
     _title_slug = re.sub(r"[^\w\s-]", "", _video_titles[0] if len(_video_titles) == 1 else "multiple_videos")
     _title_slug = re.sub(r"\s+", "_", _title_slug.strip())[:50]
 
-    # --- Fetch stats breakdown ---
+    # --- Fetch stats in sidebar ---
     total_raw = len(raw_comments)
-    top_level = [c for c in raw_comments if not c.get("is_reply")]
-    replies_list = [c for c in raw_comments if c.get("is_reply")]
-
-    st.subheader("Fetch Stats")
-    stat_col1, stat_col2, stat_col3 = st.columns(3)
-    stat_col1.metric("Total Comments", f"{total_raw:,}")
-    stat_col2.metric("Top-Level", f"{len(top_level):,}")
-    stat_col3.metric("Replies", f"{len(replies_list):,}")
-
-    # Per-video breakdown
+    st.sidebar.header("Fetch Stats")
+    st.sidebar.metric("Total Comments", f"{total_raw:,}")
     video_titles = sorted(set(c.get("video_title", "") for c in raw_comments))
-    if len(video_titles) > 1 or video_titles:
-        for vt in video_titles:
-            v_comments = [c for c in raw_comments if c.get("video_title") == vt]
-            v_top = sum(1 for c in v_comments if not c.get("is_reply"))
-            v_replies = sum(1 for c in v_comments if c.get("is_reply"))
-            st.caption(
-                f"**{vt}** — {len(v_comments):,} total "
-                f"({v_top:,} top-level, {v_replies:,} replies)"
-            )
-
-    # (Save Project button is in the sidebar)
+    for vt in video_titles:
+        v_count = sum(1 for c in raw_comments if c.get("video_title") == vt)
+        st.sidebar.caption(f"**{vt}** — {v_count:,}")
+    st.sidebar.divider()
 
     def _run_single_analysis(raw, kw_list, excl_list, trans_map, status_obj, label=""):
         """Run filter + sentiment + clustering on raw comments. Returns list or empty."""
@@ -975,7 +854,7 @@ def main():
         st.session_state.pop("ai_summary_1", None)
         st.session_state.pop("custom_search_results", None)
         for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
-                   "fs_text_exclude", "fs_min_likes", "fs_sort", "fs_reply_type"]:
+                   "fs_text_exclude", "fs_min_likes", "fs_sort"]:
             st.session_state.pop(k, None)
 
         total_matches = sum(len(r["comments"]) for r in multi_results)
@@ -993,6 +872,49 @@ def main():
     # Auto-run analysis after fetch
     if st.session_state.pop("_needs_auto_analysis", False):
         _auto_run_subtitles_dubs(raw_comments, sq)
+
+    # Reprocess button (after functions are defined)
+    if "raw_comments" in st.session_state and "multi_analyses" in st.session_state:
+        if st.button("Reprocess analysis (re-match keywords, detect languages, analyze sentiment)", key="reprocess_btn"):
+            _raw = st.session_state["raw_comments"]
+            _overrides: dict[str, dict] = {}
+            for _src in [st.session_state.get("multi_analyses")]:
+                if not _src:
+                    continue
+                for _ma in _src:
+                    if not isinstance(_ma, dict):
+                        continue
+                    for c in _ma.get("comments", []):
+                        cid = c.get("comment_id", "")
+                        if not cid:
+                            continue
+                        override = {}
+                        if c.get("sentiment_override"):
+                            override["sentiment_label"] = c["sentiment_label"]
+                        if c.get("back_translation") and c["back_translation"] != c["comment"]:
+                            override["back_translation"] = c["back_translation"]
+                            override["original_language"] = c.get("original_language", "")
+                        if override:
+                            _overrides[cid] = override
+
+            with st.spinner("Reprocessing..."):
+                _auto_run_subtitles_dubs(_raw, st.session_state.get("search_query", ""))
+
+            _multi = st.session_state.get("multi_analyses", [])
+            _applied = 0
+            for _ma in (_multi or []):
+                for c in _ma.get("comments", []):
+                    cid = c.get("comment_id", "")
+                    if cid in _overrides:
+                        ov = _overrides[cid]
+                        if "sentiment_label" in ov:
+                            c["sentiment_label"] = ov["sentiment_label"]
+                            c["sentiment_override"] = True
+                        if "back_translation" in ov:
+                            c["back_translation"] = ov["back_translation"]
+                            c["original_language"] = ov["original_language"]
+                        _applied += 1
+            st.rerun()
 
     # --- Nothing analyzed yet ---
     if "analyzed_comments" not in st.session_state:
@@ -1139,9 +1061,6 @@ def main():
                                    f'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-left:6px;">{_ll}</span>')
 
                         _rt = ""
-                        if c.get("is_reply"):
-                            _rt = ('<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
-                                   'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-right:6px;">↩ reply</span>')
 
                         _tr = ""
                         if c.get("back_translation") and c.get("original_language"):
@@ -1321,6 +1240,17 @@ def main():
                     file_name=f"{_title_slug}_{_export_ts}_custom.pdf",
                     mime="application/pdf",
                 )
+
+        # Make tab labels prominent
+        st.html("""
+        <style>
+        button[data-baseweb="tab"] {
+            font-size: 18px !important;
+            font-weight: 700 !important;
+            padding: 12px 24px !important;
+        }
+        </style>
+        """)
 
         tab_names = [r["name"] for r in multi_analyses] + ["Custom Search"]
         tabs = st.tabs(tab_names)
@@ -1538,14 +1468,6 @@ def main():
             }
             sort_choice = st.selectbox("Sort by", options=list(sort_options.keys()), key="fs_sort")
 
-        # Row 5: Comment type
-        show_replies = st.radio(
-            "Comment type",
-            ["All", "Top-level only", "Replies only"],
-            horizontal=True,
-            key="fs_reply_type",
-        )
-
     # Apply filters
     display_comments = all_comments
 
@@ -1573,11 +1495,6 @@ def main():
 
     if min_likes > 0:
         display_comments = [c for c in display_comments if c.get("likes", 0) >= min_likes]
-
-    if show_replies == "Top-level only":
-        display_comments = [c for c in display_comments if not c.get("is_reply")]
-    elif show_replies == "Replies only":
-        display_comments = [c for c in display_comments if c.get("is_reply")]
 
     # Apply sort
     sort_key, sort_reverse = sort_options[sort_choice]
@@ -1828,9 +1745,6 @@ def main():
                                     f'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-left:6px;">{ll}</span>')
 
                     reply_tag = ""
-                    if c.get("is_reply"):
-                        reply_tag = ('<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
-                                     'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-right:6px;">↩ reply</span>')
 
                     meta = ""
                     if c.get("likes", 0) > 0:

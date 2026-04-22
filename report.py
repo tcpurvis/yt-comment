@@ -82,12 +82,6 @@ def _comment_card(c: dict, show_video_tag: bool = False) -> str:
     vtag = _video_tag(c, show_video_tag)
 
     reply_marker = ""
-    if c.get("is_reply"):
-        reply_marker = (
-            '<span style="display:inline-block;padding:1px 6px;border-radius:4px;'
-            'font-size:10px;font-weight:500;color:#00BCE7;background:#e0f7fc;'
-            'margin-right:4px;">↩ reply</span>'
-        )
 
     translation_block = ""
     if c.get("back_translation") and c.get("original_language"):
@@ -588,14 +582,6 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     # Author + date + sentiment
     content_x = x_start + avatar_size + 4
     pdf.set_xy(content_x, y_start)
-
-    # Reply marker
-    if c.get("is_reply"):
-        pdf.set_font("Lato", "I", 6)
-        pdf.set_fill_color(224, 247, 252)
-        pdf.set_text_color(0, 188, 231)
-        pdf.cell(12, 4, " reply", fill=True, new_x="END")
-        pdf.cell(3, 4, "", new_x="END")  # spacer
 
     pdf.set_font("Lato", "B", 9)
     pdf.set_text_color(3, 3, 3)
