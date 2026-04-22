@@ -900,6 +900,60 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     pdf.ln(4)
 
 
+def _bullet_matches(ai_summary: str, comments: list[dict], top_k: int = 20) -> list[dict]:
+    """For each bullet in the AI summary, compute the top-K most similar
+    comment IDs via TF-IDF cosine similarity. Returns a list aligned with
+    the bullets: [{"text": str, "tag": str, "ids": [int, ...]}]."""
+    import re as _re
+    if not ai_summary:
+        return []
+    bullets_meta = []
+    for line in ai_summary.split("\n"):
+        line = line.strip()
+        if not line.startswith("- "):
+            continue
+        body = line[2:].strip()
+        tag_m = _re.match(r"^\s*\[(POS|NEG|NEU)\]\s*", body)
+        tag = tag_m.group(1) if tag_m else ""
+        body_no_tag = body[tag_m.end():] if tag_m else body
+        bullets_meta.append({"text": body_no_tag, "tag": tag})
+
+    if not bullets_meta or not comments:
+        return [{"text": b["text"], "tag": b["tag"], "ids": []} for b in bullets_meta]
+
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+    except Exception:
+        return [{"text": b["text"], "tag": b["tag"], "ids": []} for b in bullets_meta]
+
+    texts = [b["text"] for b in bullets_meta] + [
+        (c.get("back_translation") or c.get("comment") or "") for c in comments
+    ]
+    try:
+        vec = TfidfVectorizer(stop_words="english", ngram_range=(1, 2),
+                               max_features=4000, min_df=1)
+        mat = vec.fit_transform(texts)
+    except Exception:
+        return [{"text": b["text"], "tag": b["tag"], "ids": []} for b in bullets_meta]
+
+    n_bullets = len(bullets_meta)
+    sims = cosine_similarity(mat[:n_bullets], mat[n_bullets:])
+    out = []
+    for i, bm in enumerate(bullets_meta):
+        scores = sims[i]
+        ranked = sorted(range(len(scores)), key=lambda j: scores[j], reverse=True)
+        ids = []
+        for j in ranked[:top_k]:
+            if scores[j] < 0.05:
+                break
+            cid = comments[j].get("_id")
+            if cid is not None:
+                ids.append(cid)
+        out.append({"text": bm["text"], "tag": bm["tag"], "ids": ids})
+    return out
+
+
 def build_interactive_html_report(
     search_query: str,
     sections: list[dict],
@@ -953,6 +1007,9 @@ def build_interactive_html_report(
             "name": s.get("name", ""),
             "one_liner": s.get("one_liner", ""),
             "ai_summary": s.get("ai_summary", ""),
+            "bullet_matches": _bullet_matches(
+                s.get("ai_summary", ""), s.get("comments", [])
+            ),
             "comments": payload_comments,
         })
 
@@ -1067,12 +1124,19 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
   font-size: 11px; font-weight: 700; color: var(--muted);
   letter-spacing: 0.6px; text-transform: uppercase; margin-bottom: 10px;
 }}
-.overall-cols {{ display: flex; gap: 16px; margin-top: 10px; }}
+.overall-cols {{ display: flex; gap: 20px; margin-top: 10px; }}
 .overall-col {{ flex: 1; min-width: 0; }}
 .overall-col h4 {{
-  color: var(--cyan); font-size: 14px; font-weight: 700; margin-bottom: 4px;
+  color: var(--cyan); font-size: 14px; font-weight: 700; margin-bottom: 8px;
 }}
-.overall-col p {{ font-size: 14px; color: #4b5563; font-style: italic; margin: 0; }}
+.overall-col-body {{ display: flex; gap: 12px; align-items: center; }}
+.overall-col p {{ font-size: 14px; color: #4b5563; font-style: italic; margin: 0; flex: 1; min-width: 0; }}
+.pie {{
+  width: 58px; height: 58px; border-radius: 50%;
+  flex-shrink: 0; box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  border: 1px solid rgba(255,255,255,0.6);
+}}
+.pie-empty {{ background: #e5e7eb; }}
 @media (max-width: 620px) {{ .overall-cols {{ flex-direction: column; }} }}
 .filters {{
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
@@ -1137,6 +1201,25 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
   font-size: 11px; font-weight: 700; color: #6b7280; letter-spacing: 0.5px;
   text-transform: uppercase;
 }}
+.ai-summary li.clickable {{
+  cursor: pointer; padding: 2px 4px; margin-left: -4px;
+  border-radius: 4px; transition: background 0.15s ease;
+}}
+.ai-summary li.clickable:hover {{ background: #e0f7fc; }}
+.ai-summary li.clickable.active {{ background: #fef3c7; outline: 1px solid #fcd34d; }}
+.bullet-filter-banner {{
+  display: flex; align-items: center; gap: 10px;
+  background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px;
+  padding: 8px 12px; margin-bottom: 12px; font-size: 13px;
+}}
+.bullet-filter-banner .label {{ flex: 1; color: #78350f; }}
+.bullet-filter-banner .label em {{ color: #92400e; font-weight: 600; }}
+.bullet-filter-banner .clear-btn {{
+  background: #fff; border: 1px solid #fcd34d; border-radius: 6px;
+  padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+  color: #78350f;
+}}
+.bullet-filter-banner .clear-btn:hover {{ background: #fef3c7; }}
 .controls-row {{ display: flex; gap: 16px; margin-bottom: 14px; font-size: 13px; color: var(--muted); }}
 .count-summary {{ font-size: 12px; color: var(--muted); margin-bottom: 10px; }}
 .no-results {{ padding: 30px; text-align: center; color: var(--muted); font-style: italic; }}
@@ -1191,7 +1274,7 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
     if (days < 365) return Math.floor(days / 30) + 'mo ago';
     return Math.floor(days / 365) + 'y ago';
   }}
-  function renderAISummary(md) {{
+  function renderAISummary(md, bulletMatches) {{
     if (!md) return '';
     // Convert [POS]/[NEG]/[NEU] tags to pills
     md = md.replace(/\[(POS|NEG|NEU)\]/g, (_, t) => {{
@@ -1200,12 +1283,21 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
       return '<span class="sent-tag ' + cls + '">' + label + '</span>';
     }});
     const lines = md.split('\n');
-    let html = '', inUL = false;
+    let html = '', inUL = false, bulletIdx = 0;
     for (const line of lines) {{
       const trimmed = line.trim();
       if (trimmed.startsWith('- ')) {{
         if (!inUL) {{ html += '<ul>'; inUL = true; }}
-        html += '<li>' + inlineFmt(trimmed.slice(2)) + '</li>';
+        const match = (bulletMatches || [])[bulletIdx];
+        const ids = (match && match.ids) || [];
+        const clickable = ids.length > 0;
+        html += '<li' + (clickable
+          ? ' class="clickable" data-bullet-idx="' + bulletIdx +
+            '" title="Click to filter to ' + ids.length + ' matching comment' +
+            (ids.length === 1 ? '' : 's')
+          : '') + (clickable ? '"' : '') +
+          '>' + inlineFmt(trimmed.slice(2)) + '</li>';
+        bulletIdx++;
       }} else {{
         if (inUL) {{ html += '</ul>'; inUL = false; }}
         if (trimmed) html += '<p>' + inlineFmt(trimmed) + '</p>';
@@ -1278,7 +1370,7 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
   document.getElementById('meta').textContent =
     'Generated ' + DATA.generated_at + ' · ' + DATA.total_comments.toLocaleString() + ' total comments';
 
-  // ----- Overall summary: per-section one-liners, always visible -----
+  // ----- Overall summary: per-section one-liners + pie charts -----
   const overallEl = document.getElementById('overall-summary');
   function splitOneLinerTag(text) {{
     const m = String(text || '').match(/^\s*\[(POS|NEG|NEU)\]\s*(.*)$/);
@@ -1292,13 +1384,38 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
     return '<span class="sent-tag ' + cls + '" style="margin-left:6px;">' +
            label + '</span>';
   }}
+  function pieStyle(counts) {{
+    const total = counts.Positive + counts.Negative + counts.Neutral;
+    if (!total) return 'background:#e5e7eb;';
+    let p = 0;
+    const segs = [];
+    for (const lbl of ['Positive', 'Neutral', 'Negative']) {{
+      const n = counts[lbl] || 0;
+      if (!n) continue;
+      const start = (p / total * 100).toFixed(2);
+      p += n;
+      const end = (p / total * 100).toFixed(2);
+      segs.push(DATA.sentiment_colors[lbl] + ' ' + start + '% ' + end + '%');
+    }}
+    return 'background:conic-gradient(' + segs.join(', ') + ');';
+  }}
   const overallCols = DATA.sections
-    .filter(s => s.one_liner)
+    .filter(s => s.one_liner || s.comments.length)
     .map(s => {{
       const parts = splitOneLinerTag(s.one_liner);
+      const counts = countSentiments(s.comments);
+      const total = s.comments.length;
+      const totalStr = total.toLocaleString() + ' comment' + (total === 1 ? '' : 's');
+      const blurb = parts.body ? escapeHTML(parts.body) :
+        '<span style="color:#9ca3af;">No summary yet.</span>';
       return '<div class="overall-col">' +
         '<h4>' + escapeHTML(s.name) + pillHTML(parts.tag) + '</h4>' +
-        '<p>' + escapeHTML(parts.body) + '</p>' +
+        '<div class="overall-col-body">' +
+          '<div class="pie" style="' + pieStyle(counts) + '" title="' +
+            'Positive ' + counts.Positive + ' · Neutral ' + counts.Neutral +
+            ' · Negative ' + counts.Negative + ' (' + totalStr + ')' + '"></div>' +
+          '<p>' + blurb + '</p>' +
+        '</div>' +
       '</div>';
     }}).join('');
   if (overallCols) {{
@@ -1342,10 +1459,11 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
     // One-liner is shown in the always-visible overall summary at the top of
     // the page, so it's omitted here to avoid duplication.
     const aiSummaryHTML = sec.ai_summary
-      ? '<div class="ai-summary">' + renderAISummary(sec.ai_summary) + '</div>' : '';
+      ? '<div class="ai-summary">' + renderAISummary(sec.ai_summary, sec.bullet_matches) + '</div>' : '';
 
     panel.innerHTML =
       sentimentBar(counts) + aiSummaryHTML +
+      '<div class="bullet-filter-host"></div>' +
       '<div class="filters">' +
         '<input type="text" class="f-search" placeholder="Search within comments…">' +
         '<div class="filter-group"><label>Lang</label>' +
@@ -1374,14 +1492,59 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
     const state = {{
       sentiments: new Set(['Positive', 'Neutral', 'Negative']),
       lang: '', minLikes: 0, search: '', sort: 'likes-desc',
+      bulletFilter: null,  // {{idx, ids: Set, text}} when a summary bullet is clicked
     }};
     const SENT_RANK = {{Positive: 2, Neutral: 1, Negative: 0}};
     const host = panel.querySelector('.comments-host');
     const countEl = panel.querySelector('.count-summary');
+    const bulletBannerHost = panel.querySelector('.bullet-filter-host');
+
+    function updateBulletBanner() {{
+      if (!state.bulletFilter) {{ bulletBannerHost.innerHTML = ''; return; }}
+      const f = state.bulletFilter;
+      bulletBannerHost.innerHTML =
+        '<div class="bullet-filter-banner">' +
+          '<div class="label">Showing only comments that match: ' +
+            '<em>"' + escapeHTML(f.text) + '"</em></div>' +
+          '<button class="clear-btn">Clear filter</button>' +
+        '</div>';
+      bulletBannerHost.querySelector('.clear-btn').addEventListener('click', () => {{
+        state.bulletFilter = null;
+        panel.querySelectorAll('.ai-summary li.clickable').forEach(
+          li => li.classList.remove('active')
+        );
+        refresh();
+      }});
+    }}
+
+    // Wire bullet clicks
+    panel.querySelectorAll('.ai-summary li.clickable').forEach(li => {{
+      li.addEventListener('click', () => {{
+        const idx = parseInt(li.dataset.bulletIdx, 10);
+        const match = (sec.bullet_matches || [])[idx];
+        if (!match || !match.ids || !match.ids.length) return;
+        // Toggle off if clicking the same bullet again
+        if (state.bulletFilter && state.bulletFilter.idx === idx) {{
+          state.bulletFilter = null;
+          li.classList.remove('active');
+        }} else {{
+          panel.querySelectorAll('.ai-summary li.clickable').forEach(
+            other => other.classList.remove('active')
+          );
+          li.classList.add('active');
+          state.bulletFilter = {{
+            idx: idx, ids: new Set(match.ids), text: match.text,
+          }};
+        }}
+        refresh();
+      }});
+    }});
 
     function refresh() {{
+      updateBulletBanner();
       const search = state.search.toLowerCase().trim();
       let filtered = sec.comments.filter(c => {{
+        if (state.bulletFilter && !state.bulletFilter.ids.has(c.id)) return false;
         if (!state.sentiments.has(c.sentiment_label)) return false;
         if (state.lang && c.matched_language !== state.lang) return false;
         if ((c.likes || 0) < state.minLikes) return false;
