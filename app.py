@@ -322,6 +322,18 @@ def main():
 
     # Save project button in sidebar (only when data exists)
     if "raw_comments" in st.session_state:
+        # Download PDF Report (at top — renders from stashed bytes after page 2 builds PDF)
+        if st.session_state.get("_pdf_report_bytes"):
+            st.sidebar.download_button(
+                label="Download PDF Report",
+                data=st.session_state["_pdf_report_bytes"],
+                file_name=st.session_state.get("_pdf_report_filename", "report.pdf"),
+                mime="application/pdf",
+                type="primary",
+                key="sidebar_pdf_download",
+            )
+            st.sidebar.divider()
+
         st.sidebar.header("Save Project")
         st.sidebar.caption("Save full session to resume later")
         _raw_h = st.session_state["raw_comments"]
@@ -362,8 +374,6 @@ def main():
             mime="application/json",
             key="save_project_sidebar",
         )
-        if st.sidebar.button("Reanalyze", key="sidebar_reanalyze"):
-            st.session_state["_needs_reanalyze"] = True
 
         # Start Over (confirmation before clearing)
         if st.sidebar.button("Start Over", key="sidebar_start_over"):
@@ -1134,6 +1144,8 @@ def main():
                 # Clear ALL selection checkbox keys
                 st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
                 st.rerun()
+        if st.sidebar.button("Reanalyze", key="sidebar_reanalyze_bulk"):
+            st.session_state["_needs_reanalyze"] = True
 
         # Define custom search renderer (runs on raw comments)
         # Comment cards in fragment to prevent full rerun on checkbox
@@ -1184,7 +1196,9 @@ def main():
                                    f'color:#4a5568;font-style:italic;">🌐 {_bt}</div>')
 
                         # Single row: checkbox | card | skip | lang
-                        _tc1, _tc2, _tc3, _tc4 = st.columns([0.03, 0.77, 0.07, 0.13], vertical_alignment="top")
+                        _tc1, _tc2, _tcP, _tcN, _tcNg, _tc3, _tc4 = st.columns(
+                            [0.03, 0.62, 0.04, 0.04, 0.04, 0.08, 0.15], vertical_alignment="top"
+                        )
                         _sver_t = st.session_state.get("_sel_version", 0)
                         with _tc1:
                             _sel = st.checkbox("s", value=(cid in _bsel_f),
@@ -1193,6 +1207,28 @@ def main():
                                 _bsel_f.add(cid)
                             else:
                                 _bsel_f.discard(cid)
+                        _cur_sent = c["sentiment_label"]
+                        with _tcP:
+                            if st.button("😊", key=f"pos_{_tidx}_{cid}",
+                                         type="primary" if _cur_sent == "Positive" else "secondary",
+                                         help="Mark as Positive"):
+                                c["sentiment_label"] = "Positive"
+                                c["sentiment_override"] = True
+                                st.rerun()
+                        with _tcN:
+                            if st.button("😐", key=f"neu_{_tidx}_{cid}",
+                                         type="primary" if _cur_sent == "Neutral" else "secondary",
+                                         help="Mark as Neutral"):
+                                c["sentiment_label"] = "Neutral"
+                                c["sentiment_override"] = True
+                                st.rerun()
+                        with _tcNg:
+                            if st.button("😞", key=f"neg_{_tidx}_{cid}",
+                                         type="primary" if _cur_sent == "Negative" else "secondary",
+                                         help="Mark as Negative"):
+                                c["sentiment_label"] = "Negative"
+                                c["sentiment_override"] = True
+                                st.rerun()
                         with _tc2:
                             st.html(f"""
                             <div style="display:flex;gap:8px;opacity:{_op};align-items:flex-start;">
@@ -1578,13 +1614,9 @@ def main():
             _preset_name = st.session_state.get("keyword_preset", "Custom")
             pdf_bytes = build_pdf_report(_all_vis, sq, kws, preset_name=_preset_name,
                                           multi_sections=_all_summaries)
-            st.download_button(
-                label="Download PDF Report",
-                data=pdf_bytes,
-                file_name=f"{_title_slug}_{_export_ts}_report.pdf",
-                mime="application/pdf",
-                type="primary",
-            )
+            # Stash for sidebar download button
+            st.session_state["_pdf_report_bytes"] = pdf_bytes
+            st.session_state["_pdf_report_filename"] = f"{_title_slug}_{_export_ts}_report.pdf"
 
         st.session_state["hidden_ids"] = hidden_ids
         return
