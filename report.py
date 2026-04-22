@@ -1448,7 +1448,7 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
     // the page, so it's omitted here to avoid duplication.
     const hasClickableBullets = (sec.bullet_matches || []).some(b => (b.ids || []).length);
     const bulletHintHTML = hasClickableBullets
-      ? '<div class="bullet-hint">💡 Tip: click any bullet to filter the comments below to the ones it summarizes.</div>'
+      ? '<div class="bullet-hint"><strong>[BETA]</strong> Click any bullet to filter the comments below to the ones it summarizes. Results may not be fully accurate.</div>'
       : '';
     const aiSummaryHTML = sec.ai_summary
       ? '<div class="ai-summary">' + bulletHintHTML +
