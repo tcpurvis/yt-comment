@@ -551,6 +551,7 @@ def main():
                             _parts.append(f"{len(data['custom_search_results']):,} custom search results")
                         _detail = f" · {', '.join(_parts)}" if _parts else ""
                         st.success(f"Loaded **{len(data['comments']):,}** raw comments{_detail}.")
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Failed to load file: {e}")
 
@@ -871,6 +872,9 @@ def main():
 
             st.success(f"Fetched **{len(raw_comments):,}** comments from **{len(videos)}** video(s).")
             st.session_state["_needs_auto_analysis"] = True
+            # Rerun so the page 1 setup UI (rendered earlier this run) is replaced
+            # by the page 2 analysis view on the next pass.
+            st.rerun()
 
     # --- Nothing fetched yet ---
     if "raw_comments" not in st.session_state:
