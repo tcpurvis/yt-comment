@@ -532,12 +532,15 @@ def main():
     # Save project button in sidebar (only when data exists)
     if "raw_comments" in st.session_state:
         # Reserve slots at the top of the sidebar for Download PDF, Share link,
-        # and Reanalyze. They're filled later in the run once the reports have
-        # been built — otherwise on the first page-2 render those buttons would
-        # be missing until the user clicks anything to trigger a rerun.
+        # Reanalyze, Regroup themes, and Regenerate summaries. They're filled
+        # later in the run once the reports have been built — otherwise on the
+        # first page-2 render those buttons would be missing until the user
+        # clicks anything to trigger a rerun.
         _pdf_btn_slot = st.sidebar.empty()
         _html_btn_slot = st.sidebar.empty()
         _reanalyze_btn_slot = st.sidebar.empty()
+        _regroup_btn_slot = st.sidebar.empty()
+        _regen_sum_btn_slot = st.sidebar.empty()
         st.sidebar.divider()
 
         st.sidebar.header("Save Project")
@@ -1014,8 +1017,12 @@ def main():
                         mr["comments"], mr["name"]
                     )
 
-    def _auto_run_subtitles_dubs(raw_comments, search_query=""):
-        """Auto-run Subtitles & Dubs analysis in all languages."""
+    def _auto_run_subtitles_dubs(raw_comments, search_query="", preserve_overrides=None):
+        """Auto-run Subtitles & Dubs analysis in all languages.
+
+        preserve_overrides: optional {comment_id: {sentiment_label?, back_translation?,
+        original_language?}} applied BEFORE translation, so cached translations
+        skip the Claude API call entirely when the comment is still matched."""
         preset_data = KEYWORD_PRESETS["Subtitles & Dubs"]
         multi_names = preset_data["analyses"]
         all_lang_names = list(SUPPORTED_LANGUAGES.keys())
@@ -1039,10 +1046,27 @@ def main():
             )
             multi_results.append({"name": analysis_name, "comments": result})
 
+        # Apply any preserved overrides (sentiment + translations from a prior
+        # run) BEFORE _auto_translate_multi so cached translations short-circuit
+        # the batch translate call.
+        if preserve_overrides:
+            for ma in multi_results:
+                for c in ma.get("comments", []):
+                    cid = c.get("comment_id", "")
+                    if cid in preserve_overrides:
+                        ov = preserve_overrides[cid]
+                        if "sentiment_label" in ov:
+                            c["sentiment_label"] = ov["sentiment_label"]
+                            c["sentiment_override"] = True
+                        if "back_translation" in ov:
+                            c["back_translation"] = ov["back_translation"]
+                            if ov.get("original_language"):
+                                c["original_language"] = ov["original_language"]
+
         status.update(label="Analysis complete.", state="complete", expanded=False)
 
-        # Auto-translate any non-English comments before storing so the cards
-        # render with translations on first page 2 load.
+        # Auto-translate any non-English comments that don't already carry a
+        # translation from preserve_overrides.
         _auto_translate_multi(multi_results)
 
         st.session_state["multi_analyses"] = multi_results
@@ -1253,45 +1277,62 @@ def main():
     # Reanalyze trigger (button lives in sidebar, flag is set there)
     if st.session_state.pop("_needs_reanalyze", False) and "raw_comments" in st.session_state and "multi_analyses" in st.session_state:
         _raw = st.session_state["raw_comments"]
-        if True:  # preserve indentation of existing block
-            _overrides: dict[str, dict] = {}
-            for _src in [st.session_state.get("multi_analyses")]:
-                if not _src:
+        # Harvest sentiment overrides + existing translations so comments that
+        # remain matched after re-filtering keep their edits and don't re-hit
+        # the translation API.
+        _overrides: dict[str, dict] = {}
+        for _src in [st.session_state.get("multi_analyses")]:
+            if not _src:
+                continue
+            for _ma in _src:
+                if not isinstance(_ma, dict):
                     continue
-                for _ma in _src:
-                    if not isinstance(_ma, dict):
-                        continue
-                    for c in _ma.get("comments", []):
-                        cid = c.get("comment_id", "")
-                        if not cid:
-                            continue
-                        override = {}
-                        if c.get("sentiment_override"):
-                            override["sentiment_label"] = c["sentiment_label"]
-                        if c.get("back_translation") and c["back_translation"] != c["comment"]:
-                            override["back_translation"] = c["back_translation"]
-                            override["original_language"] = c.get("original_language", "")
-                        if override:
-                            _overrides[cid] = override
-
-            with st.spinner("Reprocessing..."):
-                _auto_run_subtitles_dubs(_raw, st.session_state.get("search_query", ""))
-
-            _multi = st.session_state.get("multi_analyses", [])
-            _applied = 0
-            for _ma in (_multi or []):
                 for c in _ma.get("comments", []):
                     cid = c.get("comment_id", "")
-                    if cid in _overrides:
-                        ov = _overrides[cid]
-                        if "sentiment_label" in ov:
-                            c["sentiment_label"] = ov["sentiment_label"]
-                            c["sentiment_override"] = True
-                        if "back_translation" in ov:
-                            c["back_translation"] = ov["back_translation"]
-                            c["original_language"] = ov["original_language"]
-                        _applied += 1
-            st.session_state["_charts_stale"] = False
+                    if not cid:
+                        continue
+                    override = {}
+                    if c.get("sentiment_override"):
+                        override["sentiment_label"] = c["sentiment_label"]
+                    if c.get("back_translation") and c["back_translation"] != c["comment"]:
+                        override["back_translation"] = c["back_translation"]
+                        override["original_language"] = c.get("original_language", "")
+                    if override:
+                        _overrides[cid] = override
+
+        with st.spinner("Reprocessing..."):
+            _auto_run_subtitles_dubs(
+                _raw, st.session_state.get("search_query", ""),
+                preserve_overrides=_overrides,
+            )
+
+        st.session_state["_charts_stale"] = False
+        st.rerun()
+
+    # Regroup themes — re-cluster each tab's comments by theme and ask Claude
+    # for fresh semantic names. Does NOT touch sentiment labels or translations.
+    if st.session_state.pop("_needs_regroup", False) and "multi_analyses" in st.session_state:
+        _ma_r = st.session_state.get("multi_analyses") or []
+        if _ma_r:
+            with st.spinner("Regrouping themes..."):
+                for _ma in _ma_r:
+                    if _ma.get("comments"):
+                        cluster_into_themes(_ma["comments"])
+                        _rename_themes_with_claude(_ma["comments"])
+            st.session_state["multi_analyses"] = _ma_r
+            st.success("Themes regrouped. Sentiment labels and translations were not changed.")
+            st.rerun()
+
+    # Force-regenerate per-tab AI summaries and one-liners (useful when a
+    # prior run failed silently or the user wants a fresh take).
+    if st.session_state.pop("_needs_regen_summaries", False) and "multi_analyses" in st.session_state:
+        _ma_s = st.session_state.get("multi_analyses") or []
+        if _ma_s:
+            for _mi in range(len(_ma_s)):
+                st.session_state.pop(f"ai_summary_{_mi}", None)
+                st.session_state.pop(f"one_liner_{_mi}", None)
+            _backfill_summaries(_ma_s, st.session_state.get("search_query", ""))
+            st.success("Summaries regenerated.")
             st.rerun()
 
     # --- Nothing analyzed yet ---
@@ -1305,10 +1346,18 @@ def main():
         st.session_state["_bulk_selected"] = set()
     bulk_selected = st.session_state["_bulk_selected"]
 
-    # Fill the Reanalyze slot now that analysis handlers have run
+    # Fill the Reanalyze + utility slots now that analysis handlers have run
     if multi_analyses:
         if _reanalyze_btn_slot.button("Reanalyze Data", key="sidebar_reanalyze_top", type="primary"):
             st.session_state["_needs_reanalyze"] = True
+            st.rerun()
+        if _regroup_btn_slot.button("Regroup Themes", key="sidebar_regroup_themes",
+                                     help="Re-cluster comments by theme without changing sentiment labels or translations."):
+            st.session_state["_needs_regroup"] = True
+            st.rerun()
+        if _regen_sum_btn_slot.button("Regenerate Summaries", key="sidebar_regen_summaries",
+                                       help="Force-regenerate the one-line summaries and AI summaries for each section."):
+            st.session_state["_needs_regen_summaries"] = True
             st.rerun()
 
     # Tab selector for multi-analysis
