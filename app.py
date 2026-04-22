@@ -346,6 +346,8 @@ def main():
             mime="application/json",
             key="save_project_sidebar",
         )
+        if st.sidebar.button("Reanalyze", key="sidebar_reanalyze"):
+            st.session_state["_needs_reanalyze"] = True
         st.sidebar.divider()
 
     api_key = st.secrets.get("YOUTUBE_API_KEY", "")
@@ -759,11 +761,10 @@ def main():
     _fs1, _fs2 = st.sidebar.columns(2)
     _fs1.metric("Total Comments", f"{total_raw:,}")
     _fs2.metric("Keyword Matches", f"{_match_total:,}")
-    video_titles = sorted(set(c.get("video_title", "") for c in raw_comments))
-    for vt in video_titles:
-        v_count = sum(1 for c in raw_comments if c.get("video_title") == vt)
-        st.sidebar.caption(f"**{vt}** — {v_count:,}")
     st.sidebar.divider()
+
+    # Video titles shown above tabs — store for later
+    _video_titles_display = sorted(set(c.get("video_title", "") for c in raw_comments if c.get("video_title")))
 
     def _run_single_analysis(raw, kw_list, excl_list, trans_map, status_obj, label=""):
         """Run filter + sentiment + clustering on raw comments. Returns list or empty."""
@@ -877,10 +878,10 @@ def main():
     if st.session_state.pop("_needs_auto_analysis", False):
         _auto_run_subtitles_dubs(raw_comments, sq)
 
-    # Reprocess button (after functions are defined)
-    if "raw_comments" in st.session_state and "multi_analyses" in st.session_state:
-        if st.button("Reprocess analysis (re-match keywords, detect languages, analyze sentiment)", key="reprocess_btn"):
-            _raw = st.session_state["raw_comments"]
+    # Reanalyze trigger (button lives in sidebar, flag is set there)
+    if st.session_state.pop("_needs_reanalyze", False) and "raw_comments" in st.session_state and "multi_analyses" in st.session_state:
+        _raw = st.session_state["raw_comments"]
+        if True:  # preserve indentation of existing block
             _overrides: dict[str, dict] = {}
             for _src in [st.session_state.get("multi_analyses")]:
                 if not _src:
@@ -1253,7 +1254,8 @@ def main():
                     <div style="display:flex;align-items:center;gap:12px;">
                       <div style="width:80px;height:80px;border-radius:50%;
                                   background:conic-gradient({_gradient});flex-shrink:0;"></div>
-                      <div style="flex:1;min-width:0;max-height:80px;overflow-y:auto;">
+                      <div style="flex:1;min-width:0;max-height:100px;overflow-y:auto;
+                                  display:grid;grid-template-columns:1fr 1fr;gap:0 10px;">
                         {"".join(_legend_parts)}
                       </div>
                     </div>
@@ -1323,6 +1325,19 @@ def main():
         }
         </style>
         """)
+
+        # Video title(s) above tabs
+        if _video_titles_display:
+            if len(_video_titles_display) == 1:
+                _vt_html = f'<h2 style="margin:0 0 12px 0;font-size:22px;font-weight:700;color:#1a1a1a;">{html_mod.escape(_video_titles_display[0])}</h2>'
+            else:
+                _vt_html = (
+                    '<div style="margin:0 0 12px 0;">'
+                    '<div style="font-size:13px;color:#6b7280;margin-bottom:4px;">Videos</div>'
+                    + "".join(f'<div style="font-size:16px;font-weight:600;color:#1a1a1a;">{html_mod.escape(vt)}</div>' for vt in _video_titles_display)
+                    + '</div>'
+                )
+            st.html(_vt_html)
 
         tab_names = [r["name"] for r in multi_analyses] + ["Custom Search"]
         tabs = st.tabs(tab_names)
@@ -1404,7 +1419,8 @@ def main():
                         <div style="display:flex;align-items:center;gap:12px;">
                           <div style="width:80px;height:80px;border-radius:50%;
                                       background:conic-gradient({_gradient});flex-shrink:0;"></div>
-                          <div style="flex:1;min-width:0;max-height:80px;overflow-y:auto;">
+                          <div style="flex:1;min-width:0;max-height:100px;overflow-y:auto;
+                                      display:grid;grid-template-columns:1fr 1fr;gap:0 10px;">
                             {"".join(_legend_parts)}
                           </div>
                         </div>
