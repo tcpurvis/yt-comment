@@ -297,6 +297,45 @@ def fetch_comments(
     return comments
 
 
+# English names of languages → ISO code. Used to tag English comments that
+# mention a language by name (e.g. "the Japanese dub") so the language pill
+# still surfaces them even though no translation is needed.
+_ENGLISH_LANGUAGE_MENTIONS = {
+    "japanese": "ja", "spanish": "es", "french": "fr", "german": "de",
+    "portuguese": "pt", "italian": "it", "korean": "ko",
+    "chinese": "zh-CN", "mandarin": "zh-CN", "cantonese": "zh-CN",
+    "hindi": "hi", "arabic": "ar", "russian": "ru", "turkish": "tr",
+    "thai": "th", "vietnamese": "vi", "indonesian": "id",
+    "polish": "pl", "dutch": "nl", "swedish": "sv", "danish": "da",
+    "norwegian": "no", "finnish": "fi", "czech": "cs", "slovak": "sk",
+    "hungarian": "hu", "romanian": "ro", "bulgarian": "bg", "croatian": "hr",
+    "serbian": "sr", "ukrainian": "uk", "greek": "el", "hebrew": "he",
+    "persian": "fa", "farsi": "fa", "malay": "ms", "filipino": "tl",
+    "tagalog": "tl", "bengali": "bn", "tamil": "ta", "telugu": "te",
+    "malayalam": "ml", "kannada": "kn", "marathi": "mr", "gujarati": "gu",
+    "urdu": "ur", "swahili": "sw", "afrikaans": "af", "catalan": "ca",
+    "nepali": "ne", "sinhala": "si", "khmer": "km", "lao": "lo",
+    "burmese": "my", "mongolian": "mn", "kazakh": "kk", "uzbek": "uz",
+    "azerbaijani": "az", "armenian": "hy", "georgian": "ka", "albanian": "sq",
+    "macedonian": "mk", "slovenian": "sl", "estonian": "et", "latvian": "lv",
+    "lithuanian": "lt", "icelandic": "is", "basque": "eu", "galician": "gl",
+}
+
+_ENGLISH_LANGUAGE_MENTION_PATTERN = re.compile(
+    r"\b(?:" + "|".join(re.escape(k) for k in _ENGLISH_LANGUAGE_MENTIONS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _find_english_language_mention(text: str) -> str | None:
+    """Return the ISO code of the first language mentioned by name in an
+    English comment, or None. Uses whole-word, case-insensitive matching."""
+    m = _ENGLISH_LANGUAGE_MENTION_PATTERN.search(text or "")
+    if m:
+        return _ENGLISH_LANGUAGE_MENTIONS[m.group(0).lower()]
+    return None
+
+
 def _build_keyword_pattern(keywords: list[str]) -> re.Pattern | None:
     """Build a compiled regex that matches any keyword as a whole word (case-insensitive)."""
     if not keywords:
@@ -601,9 +640,10 @@ def main():
                             _parts.append(f"{len(data['custom_search_results']):,} custom search results")
                         _detail = f" · {', '.join(_parts)}" if _parts else ""
                         st.success(f"Loaded **{len(data['comments']):,}** raw comments{_detail}.")
-                        # Trigger auto-translation on the next run once the
-                        # translation helper is in scope.
+                        # Trigger auto-translation and backfill of any summaries /
+                        # one-liners that older exports didn't save.
                         st.session_state["_needs_auto_translate"] = True
+                        st.session_state["_needs_summary_backfill"] = True
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to load file: {e}")
@@ -841,6 +881,11 @@ def main():
                 copy["matched_language"] = detected
                 if detected != "en":
                     copy["original_language"] = detected
+                else:
+                    # English comment — tag the mentioned language (e.g. "the Japanese dub")
+                    _mentioned = _find_english_language_mention(c["comment"])
+                    if _mentioned:
+                        copy["matched_language"] = _mentioned
                 matched_a.append(copy)
                 break
 
@@ -883,6 +928,25 @@ def main():
             c["back_translation"] = translation
             if not c.get("original_language"):
                 c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
+
+    def _backfill_summaries(multi_results, search_query=""):
+        """Generate any missing per-tab AI summaries and one-liners. Safe to
+        call after upload so older exports pick up the newer UI features."""
+        for mi, mr in enumerate(multi_results):
+            if not mr.get("comments"):
+                continue
+            _ai_key = f"ai_summary_{mi}"
+            if not st.session_state.get(_ai_key):
+                with st.spinner(f"Generating AI summary for {mr['name']}..."):
+                    st.session_state[_ai_key] = generate_ai_summary(
+                        mr["comments"], search_query
+                    )
+            _ol_key = f"one_liner_{mi}"
+            if not st.session_state.get(_ol_key):
+                with st.spinner(f"Generating one-line summary for {mr['name']}..."):
+                    st.session_state[_ol_key] = generate_one_line_summary(
+                        mr["comments"], mr["name"]
+                    )
 
     def _auto_run_subtitles_dubs(raw_comments, search_query=""):
         """Auto-run Subtitles & Dubs analysis in all languages."""
@@ -1058,6 +1122,13 @@ def main():
             _auto_translate_multi(_ma_auto)
             st.session_state["multi_analyses"] = _ma_auto
 
+    # Backfill missing summaries / one-liners on upload so old exports pick up
+    # new UI features without requiring the user to manually regenerate.
+    if st.session_state.pop("_needs_summary_backfill", False):
+        _ma_bf = st.session_state.get("multi_analyses") or []
+        if _ma_bf:
+            _backfill_summaries(_ma_bf, st.session_state.get("search_query", ""))
+
     # Delta analysis — run only on NEW comments from Session Update, append to existing tabs
     if st.session_state.pop("_needs_delta_analysis", False):
         _new_comments = st.session_state.pop("_update_new_comments", [])
@@ -1100,6 +1171,8 @@ def main():
             # Auto-translate any new non-English comments (existing translations
             # are preserved; only untranslated comments are sent to the API).
             _auto_translate_multi(_existing_multi)
+            # Regenerate missing summaries / one-liners so the UI is complete.
+            _backfill_summaries(_existing_multi, st.session_state.get("search_query", ""))
 
             status.update(label="Delta analysis complete.", state="complete", expanded=False)
             st.session_state["multi_analyses"] = _existing_multi
@@ -1277,6 +1350,16 @@ def main():
 
             for _lbl, _grp_c in _groups.items():
                 _emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[_lbl]
+                # Cluster by theme within the sentiment group so related comments
+                # sit together. Themes are emitted largest-first; pagination still
+                # applies to the flat, theme-ordered list.
+                _theme_buckets: dict[str, list[dict]] = {}
+                for _c_t in _grp_c:
+                    _theme_buckets.setdefault(_c_t.get("theme", "General"), []).append(_c_t)
+                _ordered_themes = sorted(_theme_buckets.keys(),
+                                         key=lambda t: (-len(_theme_buckets[t]), t))
+                _grp_c = [c for t in _ordered_themes for c in _theme_buckets[t]]
+
                 with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=False):
                     # Paginate to reduce widget count
                     _page_size = 50
@@ -1284,7 +1367,21 @@ def main():
                     _current_page = st.session_state.get(_page_key, 0)
                     _end = min((_current_page + 1) * _page_size, len(_grp_c))
                     _displayed = _grp_c[:_end]
+                    _last_theme = None
                     for c in _displayed:
+                        _this_theme = c.get("theme", "General")
+                        if _this_theme != _last_theme:
+                            _theme_count = len(_theme_buckets.get(_this_theme, []))
+                            st.html(
+                                f'<div style="margin:14px 0 6px 0;padding:4px 0;'
+                                f'border-top:1px solid #e5e7eb;font-size:12px;'
+                                f'font-weight:700;color:#6b7280;letter-spacing:0.5px;'
+                                f'text-transform:uppercase;">'
+                                f'{html_mod.escape(_this_theme)} '
+                                f'<span style="color:#9ca3af;font-weight:500;">'
+                                f'({_theme_count})</span></div>'
+                            )
+                            _last_theme = _this_theme
                         cid = c["_id"]
                         _is_skipped = cid in _hidden_f
 
@@ -1455,6 +1552,10 @@ def main():
                                 copy["matched_language"] = detected
                                 if detected != "en":
                                     copy["original_language"] = detected
+                                else:
+                                    _mentioned = _find_english_language_mention(c["comment"])
+                                    if _mentioned:
+                                        copy["matched_language"] = _mentioned
                                 matched.append(copy)
 
                         if matched:
