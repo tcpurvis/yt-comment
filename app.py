@@ -1382,10 +1382,11 @@ def main():
             for _lbl in ["Positive", "Neutral", "Negative"]:
                 _grp = [c for c in _comments if c["sentiment_label"] == _lbl]
                 if _grp:
-                    # Primary sort: likes desc. Secondary: sentiment rank desc
-                    # (positive > neutral > negative).
+                    # Skipped comments sink to the bottom; within each
+                    # partition, sort by likes desc then sentiment rank.
                     _grp.sort(
                         key=lambda c: (
+                            0 if c["_id"] in _hidden_f else 1,
                             c.get("likes", 0),
                             _sent_rank.get(c.get("sentiment_label"), 0),
                         ),
@@ -1396,7 +1397,7 @@ def main():
             for _lbl, _grp_c in _groups.items():
                 _emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[_lbl]
 
-                with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=False):
+                with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=True):
                     # Paginate to reduce widget count
                     _page_size = 50
                     _page_key = f"page_{_tidx}_{_lbl}"
@@ -1453,12 +1454,14 @@ def main():
                                 _bsel_f.add(cid)
                             else:
                                 _bsel_f.discard(cid)
-                        _cur_sent = c["sentiment_label"]
+                        # Show the pending sentiment (if any) for button highlight,
+                        # but don't move the comment until Refresh is clicked.
+                        _cur_sent = c.get("_pending_sentiment") or c["sentiment_label"]
                         with _tcP:
                             if st.button("😊", key=f"pos_{_tidx}_{cid}",
                                          type="primary" if _cur_sent == "Positive" else "secondary",
                                          help="Mark as Positive"):
-                                c["sentiment_label"] = "Positive"
+                                c["_pending_sentiment"] = "Positive"
                                 c["sentiment_override"] = True
                                 st.session_state["_charts_stale"] = True
                                 st.rerun(scope="fragment")
@@ -1466,7 +1469,7 @@ def main():
                             if st.button("😐", key=f"neu_{_tidx}_{cid}",
                                          type="primary" if _cur_sent == "Neutral" else "secondary",
                                          help="Mark as Neutral"):
-                                c["sentiment_label"] = "Neutral"
+                                c["_pending_sentiment"] = "Neutral"
                                 c["sentiment_override"] = True
                                 st.session_state["_charts_stale"] = True
                                 st.rerun(scope="fragment")
@@ -1474,7 +1477,7 @@ def main():
                             if st.button("😞", key=f"neg_{_tidx}_{cid}",
                                          type="primary" if _cur_sent == "Negative" else "secondary",
                                          help="Mark as Negative"):
-                                c["sentiment_label"] = "Negative"
+                                c["_pending_sentiment"] = "Negative"
                                 c["sentiment_override"] = True
                                 st.session_state["_charts_stale"] = True
                                 st.rerun(scope="fragment")
@@ -1753,11 +1756,17 @@ def main():
             _sc1, _sc2 = st.columns([0.75, 0.25], vertical_alignment="center")
             with _sc1:
                 st.warning(
-                    "Charts and AI summaries are out of date after recent edits. "
-                    "Click **Refresh Graphs** to update them."
+                    "You have pending edits. Click **Refresh** to apply sentiment "
+                    "changes and update charts."
                 )
             with _sc2:
-                if st.button("Refresh Graphs", key="refresh_graphs_btn", type="primary"):
+                if st.button("Refresh", key="refresh_btn", type="primary"):
+                    # Apply any pending sentiment overrides before the full rerun
+                    for _ma_ref in (st.session_state.get("multi_analyses") or []):
+                        for _c_ref in _ma_ref.get("comments", []):
+                            _ps = _c_ref.pop("_pending_sentiment", None)
+                            if _ps:
+                                _c_ref["sentiment_label"] = _ps
                     st.session_state["_charts_stale"] = False
                     st.rerun()
 
