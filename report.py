@@ -584,42 +584,23 @@ def build_pdf_report(
                      new_x="LMARGIN", new_y="NEXT")
             pdf.ln(4)
 
-            # Cluster by theme within the sentiment group. Themes sorted by
-            # size desc; within each theme, comments sorted by likes desc (ties
-            # broken by positive sentiment rank).
-            theme_buckets: dict[str, list[dict]] = {}
-            for _c in group:
-                theme_buckets.setdefault(_c.get("theme", "General"), []).append(_c)
-            ordered_themes = sorted(
-                theme_buckets.keys(),
-                key=lambda t: (-len(theme_buckets[t]), t),
+            # Sort by likes desc (ties: positive > neutral > negative)
+            group.sort(
+                key=lambda c: (
+                    c.get("likes", 0),
+                    _sent_rank.get(c.get("sentiment_label"), 0),
+                ),
+                reverse=True,
             )
-            for theme_name in ordered_themes:
-                theme_cs = theme_buckets[theme_name]
-                theme_cs.sort(
-                    key=lambda c: (
-                        c.get("likes", 0),
-                        _sent_rank.get(c.get("sentiment_label"), 0),
-                    ),
-                    reverse=True,
-                )
-                if pdf.get_y() > pdf.h - 30:
-                    pdf.add_page()
-                pdf.set_x(14)
-                pdf.set_font("Lato", "B", 9)
-                pdf.set_text_color(107, 114, 128)
-                pdf.cell(0, 5, _safe(f"{theme_name.upper()} · {len(theme_cs)}"),
-                         new_x="LMARGIN", new_y="NEXT")
-                pdf.ln(1)
-                for c in theme_cs:
-                    _draw_comment(pdf, c, show_video_tag=multi_video)
+            for c in group:
+                _draw_comment(pdf, c, show_video_tag=multi_video)
 
             pdf.ln(6)
 
     # ---- Footer text ----
     pdf.set_font("Lato", "I", 8)
     pdf.set_text_color(160, 160, 160)
-    pdf.cell(0, 6, "Sentiment by VADER  |  Themes by TF-IDF + KMeans",
+    pdf.cell(0, 6, "Sentiment by VADER",
              align="C", new_x="LMARGIN", new_y="NEXT")
 
     return bytes(pdf.output())
@@ -999,7 +980,6 @@ def build_interactive_html_report(
                 "date": c.get("date", ""),
                 "sentiment_label": c.get("sentiment_label", "Neutral"),
                 "sentiment_score": c.get("sentiment_score", 0),
-                "theme": c.get("theme", "General"),
                 "video_id": c.get("video_id", ""),
                 "video_title": c.get("video_title", ""),
             })
@@ -1196,11 +1176,6 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
   font-weight: 500; color: var(--cyan); background: #e0f7fc;
 }}
 .section-header {{ margin: 18px 0 8px; font-size: 14px; font-weight: 700; }}
-.theme-sub {{
-  margin: 14px 0 6px; padding: 4px 0; border-top: 1px solid #e5e7eb;
-  font-size: 11px; font-weight: 700; color: #6b7280; letter-spacing: 0.5px;
-  text-transform: uppercase;
-}}
 .ai-summary li.clickable {{
   cursor: pointer; padding: 2px 4px; margin-left: -4px;
   border-radius: 4px; transition: background 0.15s ease;
@@ -1573,7 +1548,7 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
         host.innerHTML = '<div class="no-results">No comments match the current filters.</div>';
         return;
       }}
-      // Group by sentiment, then cluster by theme within each sentiment
+      // Group by sentiment
       let out = '';
       for (const lbl of ['Positive', 'Neutral', 'Negative']) {{
         const grp = filtered.filter(c => c.sentiment_label === lbl);
@@ -1581,22 +1556,7 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
         const emoji = {{Positive:'😊', Negative:'😞', Neutral:'😐'}}[lbl];
         out += '<div class="section-header" style="color:' + DATA.sentiment_colors[lbl] + ';">' +
                emoji + ' ' + lbl + ' (' + grp.length + ')</div>';
-        // Bucket by theme, keeping within-theme sort order from filtered
-        const themeBuckets = {{}};
-        for (const c of grp) {{
-          const t = c.theme || 'General';
-          if (!themeBuckets[t]) themeBuckets[t] = [];
-          themeBuckets[t].push(c);
-        }}
-        const orderedThemes = Object.keys(themeBuckets).sort(
-          (a, b) => themeBuckets[b].length - themeBuckets[a].length || a.localeCompare(b)
-        );
-        for (const themeName of orderedThemes) {{
-          const bucket = themeBuckets[themeName];
-          out += '<div class="theme-sub">' + escapeHTML(themeName) +
-                 ' <span style="color:#9ca3af;font-weight:500;">(' + bucket.length + ')</span></div>';
-          out += bucket.map(renderCard).join('');
-        }}
+        out += grp.map(renderCard).join('');
       }}
       host.innerHTML = out;
     }}

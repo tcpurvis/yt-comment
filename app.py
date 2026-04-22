@@ -8,7 +8,7 @@ import streamlit as st
 from googleapiclient.discovery import build
 
 from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES, SENTIMENT_COLORS, KEYWORD_PRESETS, LANGUAGE_NAMES
-from analysis import add_sentiment, cluster_into_themes, get_theme_summary, get_sentiment_counts
+from analysis import add_sentiment, get_theme_summary, get_sentiment_counts
 from translate import translate_keywords, add_back_translations, back_translate, batch_back_translate, detect_language
 from report import (
     build_html_report, build_pdf_report, build_interactive_html_report,
@@ -95,66 +95,6 @@ def _decorate_ai_summary(text: str) -> str:
         )
 
     return re.sub(r"\[(POS|NEG|NEU)\]", _repl, text)
-
-
-def _rename_themes_with_claude(comments: list[dict]) -> None:
-    """Replace TF-IDF theme names (like 'Subtitle / Captions / English') with
-    2-4 word semantic titles (like 'Missing language subtitles'). Modifies
-    comments in place. Silent no-op if the API key is absent or the call fails."""
-    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
-    if not api_key or not comments:
-        return
-
-    # Group by current theme label; skip if there's only one cluster.
-    buckets: dict[str, list[dict]] = {}
-    for c in comments:
-        buckets.setdefault(c.get("theme", "General"), []).append(c)
-    if len(buckets) < 2:
-        return
-
-    # Build a numbered list of clusters with up to 5 representative samples each.
-    names = list(buckets.keys())
-    blocks = []
-    for i, name in enumerate(names, start=1):
-        samples = buckets[name][:5]
-        sample_lines = "\n".join(
-            f"  - {(c.get('back_translation') or c['comment'])[:180]}"
-            for c in samples
-        )
-        blocks.append(f"Cluster {i} (currently \"{name}\", {len(buckets[name])} comments):\n{sample_lines}")
-    prompt = (
-        "For each cluster of YouTube comments below, write a concise 2-4 word "
-        "title capturing what the comments are ABOUT (the theme), not the sentiment. "
-        "Be specific — refer to the subject matter, not generic words like 'Comments' "
-        "or 'Discussion'. Return ONLY the titles, one per line, in the format:\n"
-        "1. <title>\n2. <title>\n...\n\n"
-        + "\n\n".join(blocks)
-    )
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=256,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        reply = response.content[0].text.strip()
-    except Exception:
-        return
-
-    new_names: dict[str, str] = {}
-    for line in reply.split("\n"):
-        m = re.match(r"\s*(\d+)[\.\)]\s*(.+)", line.strip())
-        if not m:
-            continue
-        idx = int(m.group(1)) - 1
-        title = m.group(2).strip().strip("\"").strip()
-        if 0 <= idx < len(names) and title:
-            new_names[names[idx]] = title
-
-    for c in comments:
-        old = c.get("theme", "General")
-        if old in new_names:
-            c["theme"] = new_names[old]
 
 
 def generate_one_line_summary(comments: list[dict], section_name: str) -> str:
@@ -532,14 +472,11 @@ def main():
     # Save project button in sidebar (only when data exists)
     if "raw_comments" in st.session_state:
         # Reserve slots at the top of the sidebar for Download PDF, Share link,
-        # Reanalyze, Regroup themes, and Regenerate summaries. They're filled
-        # later in the run once the reports have been built — otherwise on the
-        # first page-2 render those buttons would be missing until the user
-        # clicks anything to trigger a rerun.
+        # Reanalyze and Regenerate summaries slots. They're filled later in
+        # the run once the reports have been built.
         _pdf_btn_slot = st.sidebar.empty()
         _html_btn_slot = st.sidebar.empty()
         _reanalyze_btn_slot = st.sidebar.empty()
-        _regroup_btn_slot = st.sidebar.empty()
         _regen_sum_btn_slot = st.sidebar.empty()
         st.sidebar.divider()
 
@@ -968,10 +905,6 @@ def main():
         status_obj.write(f"{prefix}+{sc['Positive']} ~{sc['Neutral']} -{sc['Negative']}")
 
         # Themes
-        cluster_into_themes(matched_a)
-        # Replace TF-IDF cluster names with semantic 2-4 word titles.
-        _rename_themes_with_claude(matched_a)
-
         for idx, c in enumerate(matched_a):
             c["_id"] = idx
 
@@ -1309,20 +1242,6 @@ def main():
         st.session_state["_charts_stale"] = False
         st.rerun()
 
-    # Regroup themes — re-cluster each tab's comments by theme and ask Claude
-    # for fresh semantic names. Does NOT touch sentiment labels or translations.
-    if st.session_state.pop("_needs_regroup", False) and "multi_analyses" in st.session_state:
-        _ma_r = st.session_state.get("multi_analyses") or []
-        if _ma_r:
-            with st.spinner("Regrouping themes..."):
-                for _ma in _ma_r:
-                    if _ma.get("comments"):
-                        cluster_into_themes(_ma["comments"])
-                        _rename_themes_with_claude(_ma["comments"])
-            st.session_state["multi_analyses"] = _ma_r
-            st.success("Themes regrouped. Sentiment labels and translations were not changed.")
-            st.rerun()
-
     # Force-regenerate per-tab AI summaries and one-liners (useful when a
     # prior run failed silently or the user wants a fresh take).
     if st.session_state.pop("_needs_regen_summaries", False) and "multi_analyses" in st.session_state:
@@ -1350,10 +1269,6 @@ def main():
     if multi_analyses:
         if _reanalyze_btn_slot.button("Reanalyze Data", key="sidebar_reanalyze_top", type="primary"):
             st.session_state["_needs_reanalyze"] = True
-            st.rerun()
-        if _regroup_btn_slot.button("Regroup Themes", key="sidebar_regroup_themes",
-                                     help="Re-cluster comments by theme without changing sentiment labels or translations."):
-            st.session_state["_needs_regroup"] = True
             st.rerun()
         if _regen_sum_btn_slot.button("Regenerate Summaries", key="sidebar_regen_summaries",
                                        help="Force-regenerate the one-line summaries and AI summaries for each section."):
@@ -1474,15 +1389,6 @@ def main():
 
             for _lbl, _grp_c in _groups.items():
                 _emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[_lbl]
-                # Cluster by theme within the sentiment group so related comments
-                # sit together. Themes are emitted largest-first; pagination still
-                # applies to the flat, theme-ordered list.
-                _theme_buckets: dict[str, list[dict]] = {}
-                for _c_t in _grp_c:
-                    _theme_buckets.setdefault(_c_t.get("theme", "General"), []).append(_c_t)
-                _ordered_themes = sorted(_theme_buckets.keys(),
-                                         key=lambda t: (-len(_theme_buckets[t]), t))
-                _grp_c = [c for t in _ordered_themes for c in _theme_buckets[t]]
 
                 with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=False):
                     # Paginate to reduce widget count
@@ -1491,21 +1397,7 @@ def main():
                     _current_page = st.session_state.get(_page_key, 0)
                     _end = min((_current_page + 1) * _page_size, len(_grp_c))
                     _displayed = _grp_c[:_end]
-                    _last_theme = None
                     for c in _displayed:
-                        _this_theme = c.get("theme", "General")
-                        if _this_theme != _last_theme:
-                            _theme_count = len(_theme_buckets.get(_this_theme, []))
-                            st.html(
-                                f'<div style="margin:14px 0 6px 0;padding:4px 0;'
-                                f'border-top:1px solid #e5e7eb;font-size:12px;'
-                                f'font-weight:700;color:#6b7280;letter-spacing:0.5px;'
-                                f'text-transform:uppercase;">'
-                                f'{html_mod.escape(_this_theme)} '
-                                f'<span style="color:#9ca3af;font-weight:500;">'
-                                f'({_theme_count})</span></div>'
-                            )
-                            _last_theme = _this_theme
                         cid = c["_id"]
                         _is_skipped = cid in _hidden_f
 
@@ -1684,8 +1576,6 @@ def main():
 
                         if matched:
                             add_sentiment(matched)
-                            cluster_into_themes(matched)
-                            _rename_themes_with_claude(matched)
                             for idx, c in enumerate(matched):
                                 c["_id"] = f"cs_{idx}"
 
