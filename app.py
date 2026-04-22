@@ -1205,6 +1205,7 @@ def main():
             _cs_total = len(_results)
             _cs_bar_col, _cs_pie_col = st.columns([0.65, 0.35])
             with _cs_bar_col:
+                st.markdown("**Sentiment Analysis**")
                 _cs_bar = ""
                 for _lbl in ["Positive", "Neutral", "Negative"]:
                     _cnt = _cs_sc.get(_lbl, 0)
@@ -1222,6 +1223,7 @@ def main():
                 st.html(f'<div style="display:flex;border-radius:12px;overflow:hidden;margin:8px 0 16px 0;">{_cs_bar}</div>')
 
             with _cs_pie_col:
+                st.markdown("**Language Coverage**")
                 _cs_lang_counts: dict[str, int] = {}
                 for c in _results:
                     lc = c.get("matched_language", "en")
@@ -1336,6 +1338,7 @@ def main():
                 _t_total = len(_tab_comments)
                 _bar_col, _pie_col = st.columns([0.65, 0.35])
                 with _bar_col:
+                    st.markdown("**Sentiment Analysis**")
                     _t_bar = ""
                     for _lbl in ["Positive", "Neutral", "Negative"]:
                         _cnt = _t_sc.get(_lbl, 0)
@@ -1353,6 +1356,7 @@ def main():
                     st.html(f'<div style="display:flex;border-radius:12px;overflow:hidden;margin:8px 0 16px 0;">{_t_bar}</div>')
 
                 with _pie_col:
+                    st.markdown("**Language Coverage**")
                     # Language pie chart (this tab only)
                     _tab_lang_counts: dict[str, int] = {}
                     for c in _tab_comments:
