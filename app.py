@@ -637,32 +637,40 @@ def main():
                                     reason = e.error_details[0]["reason"] if e.error_details else str(e)
                                     status.write(f"API error: {reason}")
 
-                                # Merge: new comments + existing (deduped)
+                                # Merge: new + existing
                                 merged = new_comments + existing_comments
                                 status.update(
-                                    label=f"Found {len(new_comments):,} new comments. "
-                                          f"Total: {len(merged):,}.",
+                                    label=f"Found {len(new_comments):,} new comments. Total: {len(merged):,}.",
                                     state="complete", expanded=False,
                                 )
 
-                                # Restore session
+                                # Store merged raw comments
                                 st.session_state["raw_comments"] = merged
                                 sq = ", ".join(v["title"] for v in videos)
                                 st.session_state["search_query"] = sq
-                                st.session_state.pop("analyzed_comments", None)
-                                st.session_state.pop("hidden_ids", None)
 
-                                # Restore analysis state from export if no new analysis needed
-                                if "analyzed_comments" in existing_data and not new_comments:
-                                    st.session_state["analyzed_comments"] = existing_data["analyzed_comments"]
-                                    st.session_state["hidden_ids"] = set(existing_data.get("hidden_ids", []))
-                                    st.session_state["keywords"] = existing_data.get("keywords", [])
+                                # Restore all existing analysis state (preserves user overrides)
+                                st.session_state["multi_analyses"] = existing_data.get("multi_analyses", [])
+                                st.session_state["hidden_ids"] = set(existing_data.get("hidden_ids", []))
+                                st.session_state["keywords"] = existing_data.get("keywords", [])
+                                if existing_data.get("preset"):
+                                    st.session_state["keyword_preset"] = existing_data["preset"]
+                                for _k, _v in existing_data.get("tab_summaries", {}).items():
+                                    st.session_state[_k] = _v
+                                if "custom_search_results" in existing_data:
+                                    st.session_state["custom_search_results"] = existing_data["custom_search_results"]
+
+                                # If there are new comments, flag for delta analysis (runs after functions defined below)
+                                if new_comments:
+                                    st.session_state["_update_new_comments"] = new_comments
+                                    st.session_state["_needs_delta_analysis"] = True
 
                                 st.success(
                                     f"Merged **{len(new_comments):,}** new + "
                                     f"**{len(existing_comments):,}** existing = "
                                     f"**{len(merged):,}** total comments."
                                 )
+                                st.rerun()
 
         elif st.button("Fetch Comments", type="primary"):
             from googleapiclient.errors import HttpError
@@ -911,6 +919,54 @@ def main():
     # Auto-run analysis after fetch
     if st.session_state.pop("_needs_auto_analysis", False):
         _auto_run_subtitles_dubs(raw_comments, sq)
+
+    # Delta analysis for "Update existing export" — run only on NEW comments, append to existing tabs
+    if st.session_state.pop("_needs_delta_analysis", False):
+        _new_comments = st.session_state.pop("_update_new_comments", [])
+        _existing_multi = st.session_state.get("multi_analyses") or []
+
+        if _new_comments and _existing_multi:
+            status = st.status(f"Analyzing {len(_new_comments):,} new comments...", expanded=True)
+            preset_data = KEYWORD_PRESETS["Subtitles & Dubs"]
+            multi_names = preset_data["analyses"]
+            all_lang_names = list(SUPPORTED_LANGUAGES.keys())
+
+            # Build index of existing tabs by name
+            _by_name = {ma["name"]: ma for ma in _existing_multi}
+
+            for mi, analysis_name in enumerate(multi_names):
+                status.update(label=f"Analyzing new comments for {analysis_name}...")
+                sub_preset = KEYWORD_PRESETS[analysis_name]
+                sub_kw = sub_preset["keywords"]
+                sub_trans: dict[str, list[str]] = {}
+                for lang_name in all_lang_names:
+                    lc = SUPPORTED_LANGUAGES[lang_name]
+                    if lc in sub_preset.get("translations", {}):
+                        sub_trans[lc] = sub_preset["translations"][lc]
+                    else:
+                        sub_trans[lc] = translate_keywords(sub_kw, lc)
+
+                new_matches = _run_single_analysis(
+                    _new_comments, sub_kw, [], sub_trans, status, label=analysis_name
+                )
+
+                if new_matches and analysis_name in _by_name:
+                    existing_tab = _by_name[analysis_name]
+                    existing_comments_list = existing_tab.get("comments", [])
+                    # Re-assign IDs to avoid collisions with existing
+                    _max_id = max((c.get("_id", 0) for c in existing_comments_list if isinstance(c.get("_id"), int)), default=-1)
+                    for idx, c in enumerate(new_matches):
+                        c["_id"] = _max_id + 1 + idx
+                    existing_tab["comments"] = existing_comments_list + new_matches
+
+            status.update(label="Delta analysis complete.", state="complete", expanded=False)
+            st.session_state["multi_analyses"] = _existing_multi
+
+            _total_added = sum(
+                len([c for c in _by_name.get(an, {}).get("comments", []) if c.get("_id", -1) > max((ec.get("_id", 0) for ec in []), default=-1)])
+                for an in multi_names
+            )
+            st.success(f"Added new comments to analysis tabs. Your existing overrides and translations are preserved.")
 
     # Reanalyze trigger (button lives in sidebar, flag is set there)
     if st.session_state.pop("_needs_reanalyze", False) and "raw_comments" in st.session_state and "multi_analyses" in st.session_state:
