@@ -934,27 +934,19 @@ def main():
     # Tab selector for multi-analysis
     _active_tab = 0
     if multi_analyses and len(multi_analyses) > 1:
-        # Sidebar: Language Detection + Bulk Actions for multi-tab
         _all_multi_comments = []
         for _ma in multi_analyses:
             _all_multi_comments.extend(_ma["comments"])
         _vis_multi = [c for c in _all_multi_comments if c["_id"] not in hidden_ids]
 
-        _m_lang_counts: dict[str, int] = {}
-        for c in _vis_multi:
-            lc = c.get("matched_language", "en")
-            name = LANGUAGE_NAMES.get(lc, lc)
-            _m_lang_counts[name] = _m_lang_counts.get(name, 0) + 1
-
         _m_non_english = [c for c in _vis_multi
                           if c.get("matched_language", "en") not in ("en", "all")
                           and (not c.get("back_translation") or c["back_translation"] == c["comment"])]
 
-        st.sidebar.header("Language Detection")
-        _m_lang_parts = [f"{n}: {ct:,}" for n, ct in sorted(_m_lang_counts.items(), key=lambda x: -x[1])]
-        st.sidebar.caption(" · ".join(_m_lang_parts))
+        # Translate All (stays in sidebar for convenience)
         if _m_non_english:
-            st.sidebar.caption(f"**{len(_m_non_english):,}** untranslated")
+            st.sidebar.header("Translations")
+            st.sidebar.caption(f"**{len(_m_non_english):,}** untranslated non-English comments")
             if st.sidebar.button("Translate All", key="bulk_translate_multi", type="primary"):
                 texts = [c["comment"] for c in _m_non_english]
                 with st.spinner(f"Translating {len(texts):,} comments..."):
@@ -963,6 +955,25 @@ def main():
                     c["back_translation"] = translation
                     c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
                 st.rerun()
+            st.sidebar.divider()
+
+        # Sidebar Filter & Sort (applies to all tabs)
+        st.sidebar.header("Filter & Sort")
+        _sb_text_search = st.sidebar.text_input("Search within comments",
+                                                placeholder="e.g. auto-generated",
+                                                key="sb_text_search")
+        _sb_text_exclude = st.sidebar.text_input("Does not contain",
+                                                 placeholder="e.g. spam, bot",
+                                                 key="sb_text_exclude")
+        _sb_min_likes = st.sidebar.number_input("Min likes", min_value=0, value=0,
+                                                step=1, key="sb_min_likes")
+        _sb_sort_opts = {
+            "Date (newest)": ("date", True),
+            "Date (oldest)": ("date", False),
+            "Likes (most)": ("likes", True),
+            "Likes (fewest)": ("likes", False),
+        }
+        _sb_sort = st.sidebar.selectbox("Sort by", options=list(_sb_sort_opts.keys()), key="sb_sort")
         st.sidebar.divider()
 
         st.sidebar.header("Bulk Actions")
@@ -1189,24 +1200,62 @@ def main():
 
             st.subheader(f"Custom Search — {len(_results):,} comments")
 
-            # Sentiment bar
+            # Sentiment bar + Language pie chart
             _cs_sc = get_sentiment_counts(_results)
             _cs_total = len(_results)
-            _cs_bar = ""
-            for _lbl in ["Positive", "Neutral", "Negative"]:
-                _cnt = _cs_sc.get(_lbl, 0)
-                _pct_v = _cnt / _cs_total * 100 if _cs_total else 0
-                _clr = SENTIMENT_COLORS[_lbl]
-                _tc = "#1a1a1a" if _lbl == "Positive" else "#fff"
-                if _pct_v > 0:
-                    _cs_bar += (
-                        f'<div style="flex:{_pct_v};background:{_clr};height:32px;'
-                        f'display:flex;align-items:center;justify-content:center;'
-                        f'color:{_tc};font-size:12px;font-weight:600;'
-                        f'min-width:{40 if _pct_v > 3 else 0}px;">'
-                        f'{_cnt} ({_pct_v:.0f}%)</div>'
-                    )
-            st.html(f'<div style="display:flex;border-radius:12px;overflow:hidden;margin:8px 0 16px 0;">{_cs_bar}</div>')
+            _cs_bar_col, _cs_pie_col = st.columns([0.65, 0.35])
+            with _cs_bar_col:
+                _cs_bar = ""
+                for _lbl in ["Positive", "Neutral", "Negative"]:
+                    _cnt = _cs_sc.get(_lbl, 0)
+                    _pct_v = _cnt / _cs_total * 100 if _cs_total else 0
+                    _clr = SENTIMENT_COLORS[_lbl]
+                    _tc = "#1a1a1a" if _lbl == "Positive" else "#fff"
+                    if _pct_v > 0:
+                        _cs_bar += (
+                            f'<div style="flex:{_pct_v};background:{_clr};height:32px;'
+                            f'display:flex;align-items:center;justify-content:center;'
+                            f'color:{_tc};font-size:12px;font-weight:600;'
+                            f'min-width:{40 if _pct_v > 3 else 0}px;">'
+                            f'{_cnt} ({_pct_v:.0f}%)</div>'
+                        )
+                st.html(f'<div style="display:flex;border-radius:12px;overflow:hidden;margin:8px 0 16px 0;">{_cs_bar}</div>')
+
+            with _cs_pie_col:
+                _cs_lang_counts: dict[str, int] = {}
+                for c in _results:
+                    lc = c.get("matched_language", "en")
+                    name = LANGUAGE_NAMES.get(lc, lc)
+                    _cs_lang_counts[name] = _cs_lang_counts.get(name, 0) + 1
+
+                if _cs_lang_counts:
+                    _palette = ["#00BCE7", "#E64783", "#1CE8B5", "#C94EFF",
+                                "#FFD93D", "#FF5E5B", "#CCF913", "#FF9500"]
+                    _sorted_langs = sorted(_cs_lang_counts.items(), key=lambda x: -x[1])
+                    _lang_total = sum(_cs_lang_counts.values())
+                    _gradient_parts = []
+                    _legend_parts = []
+                    _running = 0
+                    for _i, (_name, _ct) in enumerate(_sorted_langs):
+                        _color = _palette[_i % len(_palette)]
+                        _pct = _ct / _lang_total * 100
+                        _gradient_parts.append(f"{_color} {_running:.2f}% {_running + _pct:.2f}%")
+                        _running += _pct
+                        _legend_parts.append(
+                            f'<div style="display:flex;align-items:center;gap:4px;font-size:10px;margin-bottom:2px;">'
+                            f'<div style="width:10px;height:10px;border-radius:2px;background:{_color};"></div>'
+                            f'<span>{html_mod.escape(_name)}: {_ct:,}</span></div>'
+                        )
+                    _gradient = ", ".join(_gradient_parts)
+                    st.html(f"""
+                    <div style="display:flex;align-items:center;gap:12px;">
+                      <div style="width:80px;height:80px;border-radius:50%;
+                                  background:conic-gradient({_gradient});flex-shrink:0;"></div>
+                      <div style="flex:1;min-width:0;max-height:80px;overflow-y:auto;">
+                        {"".join(_legend_parts)}
+                      </div>
+                    </div>
+                    """)
 
             # AI Summary
             _ai_cs = st.session_state.get("ai_summary_custom", "")
@@ -1282,24 +1331,63 @@ def main():
 
                 st.subheader(f"{_tab_name} — {len(_tab_comments):,} comments")
 
-                # Sentiment bar for this tab
+                # Sentiment bar + Language pie chart side by side
                 _t_sc = get_sentiment_counts(_tab_comments)
                 _t_total = len(_tab_comments)
-                _t_bar = ""
-                for _lbl in ["Positive", "Neutral", "Negative"]:
-                    _cnt = _t_sc.get(_lbl, 0)
-                    _pct_v = _cnt / _t_total * 100 if _t_total else 0
-                    _clr = SENTIMENT_COLORS[_lbl]
-                    _tc = "#1a1a1a" if _lbl == "Positive" else "#fff"
-                    if _pct_v > 0:
-                        _t_bar += (
-                            f'<div style="flex:{_pct_v};background:{_clr};height:32px;'
-                            f'display:flex;align-items:center;justify-content:center;'
-                            f'color:{_tc};font-size:12px;font-weight:600;'
-                            f'min-width:{40 if _pct_v > 3 else 0}px;">'
-                            f'{_cnt} ({_pct_v:.0f}%)</div>'
-                        )
-                st.html(f'<div style="display:flex;border-radius:12px;overflow:hidden;margin:8px 0 16px 0;">{_t_bar}</div>')
+                _bar_col, _pie_col = st.columns([0.65, 0.35])
+                with _bar_col:
+                    _t_bar = ""
+                    for _lbl in ["Positive", "Neutral", "Negative"]:
+                        _cnt = _t_sc.get(_lbl, 0)
+                        _pct_v = _cnt / _t_total * 100 if _t_total else 0
+                        _clr = SENTIMENT_COLORS[_lbl]
+                        _tc = "#1a1a1a" if _lbl == "Positive" else "#fff"
+                        if _pct_v > 0:
+                            _t_bar += (
+                                f'<div style="flex:{_pct_v};background:{_clr};height:32px;'
+                                f'display:flex;align-items:center;justify-content:center;'
+                                f'color:{_tc};font-size:12px;font-weight:600;'
+                                f'min-width:{40 if _pct_v > 3 else 0}px;">'
+                                f'{_cnt} ({_pct_v:.0f}%)</div>'
+                            )
+                    st.html(f'<div style="display:flex;border-radius:12px;overflow:hidden;margin:8px 0 16px 0;">{_t_bar}</div>')
+
+                with _pie_col:
+                    # Language pie chart (this tab only)
+                    _tab_lang_counts: dict[str, int] = {}
+                    for c in _tab_comments:
+                        lc = c.get("matched_language", "en")
+                        name = LANGUAGE_NAMES.get(lc, lc)
+                        _tab_lang_counts[name] = _tab_lang_counts.get(name, 0) + 1
+
+                    if _tab_lang_counts:
+                        _palette = ["#00BCE7", "#E64783", "#1CE8B5", "#C94EFF",
+                                    "#FFD93D", "#FF5E5B", "#CCF913", "#FF9500"]
+                        _sorted_langs = sorted(_tab_lang_counts.items(), key=lambda x: -x[1])
+                        _lang_total = sum(_tab_lang_counts.values())
+                        _gradient_parts = []
+                        _legend_parts = []
+                        _running = 0
+                        for _i, (_name, _ct) in enumerate(_sorted_langs):
+                            _color = _palette[_i % len(_palette)]
+                            _pct = _ct / _lang_total * 100
+                            _gradient_parts.append(f"{_color} {_running:.2f}% {_running + _pct:.2f}%")
+                            _running += _pct
+                            _legend_parts.append(
+                                f'<div style="display:flex;align-items:center;gap:4px;font-size:10px;margin-bottom:2px;">'
+                                f'<div style="width:10px;height:10px;border-radius:2px;background:{_color};"></div>'
+                                f'<span>{html_mod.escape(_name)}: {_ct:,}</span></div>'
+                            )
+                        _gradient = ", ".join(_gradient_parts)
+                        st.html(f"""
+                        <div style="display:flex;align-items:center;gap:12px;">
+                          <div style="width:80px;height:80px;border-radius:50%;
+                                      background:conic-gradient({_gradient});flex-shrink:0;"></div>
+                          <div style="flex:1;min-width:0;max-height:80px;overflow-y:auto;">
+                            {"".join(_legend_parts)}
+                          </div>
+                        </div>
+                        """)
 
                 # AI summary for this tab
                 _ai_key = f"ai_summary_{tab_idx}"
@@ -1314,43 +1402,18 @@ def main():
                         with st.expander(f"**Summary**", expanded=True):
                             st.markdown(_ai_sum, unsafe_allow_html=True)
 
-                # Filter & Sort for this tab
-                with st.expander("**Filter & Sort**", expanded=False):
-                    _tf1, _tf2 = st.columns(2)
-                    with _tf1:
-                        _t_text_search = st.text_input("Search within comments",
-                                                       placeholder="e.g. auto-generated",
-                                                       key=f"mfs_text_{tab_idx}")
-                    with _tf2:
-                        _t_text_exclude = st.text_input("Does not contain",
-                                                        placeholder="e.g. spam, bot",
-                                                        key=f"mfs_excl_{tab_idx}")
-                    _tf3, _tf4 = st.columns(2)
-                    with _tf3:
-                        _t_min_likes = st.number_input("Min likes", min_value=0, value=0,
-                                                       step=1, key=f"mfs_likes_{tab_idx}")
-                    with _tf4:
-                        _t_sort_opts = {
-                            "Date (newest)": ("date", True),
-                            "Date (oldest)": ("date", False),
-                            "Likes (most)": ("likes", True),
-                            "Likes (fewest)": ("likes", False),
-                        }
-                        _t_sort = st.selectbox("Sort by", options=list(_t_sort_opts.keys()),
-                                               key=f"mfs_sort_{tab_idx}")
-
-                # Apply filters to this tab's comments
+                # Apply sidebar filters to this tab's comments
                 _filtered_tab = _tab_comments
-                if _t_text_search:
-                    _ts_low = _t_text_search.lower()
+                if _sb_text_search:
+                    _ts_low = _sb_text_search.lower()
                     _filtered_tab = [c for c in _filtered_tab if _ts_low in c["comment"].lower()]
-                if _t_text_exclude:
-                    _excl_words = [w.strip().lower() for w in _t_text_exclude.split(",") if w.strip()]
+                if _sb_text_exclude:
+                    _excl_words = [w.strip().lower() for w in _sb_text_exclude.split(",") if w.strip()]
                     _filtered_tab = [c for c in _filtered_tab
                                      if not any(w in c["comment"].lower() for w in _excl_words)]
-                if _t_min_likes > 0:
-                    _filtered_tab = [c for c in _filtered_tab if c.get("likes", 0) >= _t_min_likes]
-                _sk, _sr = _t_sort_opts[_t_sort]
+                if _sb_min_likes > 0:
+                    _filtered_tab = [c for c in _filtered_tab if c.get("likes", 0) >= _sb_min_likes]
+                _sk, _sr = _sb_sort_opts[_sb_sort]
                 _filtered_tab = sorted(_filtered_tab, key=lambda c: c.get(_sk, ""), reverse=_sr)
 
                 st.caption(f"Showing **{len(_filtered_tab):,}** comments")
