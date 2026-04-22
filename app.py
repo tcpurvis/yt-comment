@@ -301,8 +301,24 @@ def main():
         '</div>'
     )
 
-    st.title("YouTube Comment Analysis")
-    st.caption("Search · Analyze sentiment · Discover themes · Export PDF")
+    _has_data = "raw_comments" in st.session_state
+
+    if not _has_data:
+        # PAGE 1 — Setup
+        st.title("YouTube Comment Analysis")
+        st.caption("Search · Analyze sentiment · Discover themes · Export PDF")
+        st.html(_rainbow_bar)
+    else:
+        # PAGE 2 — Analysis (page title = video title)
+        _raw_top = st.session_state["raw_comments"]
+        _top_titles = sorted(set(c.get("video_title", "") for c in _raw_top if c.get("video_title")))
+        if len(_top_titles) == 1:
+            st.title(_top_titles[0])
+        elif _top_titles:
+            st.title(", ".join(_top_titles[:3]) + (f" (+{len(_top_titles)-3} more)" if len(_top_titles) > 3 else ""))
+        else:
+            st.title(st.session_state.get("search_query", "YouTube Comments"))
+        st.html(_rainbow_bar)
 
     # Save project button in sidebar (only when data exists)
     if "raw_comments" in st.session_state:
@@ -348,6 +364,26 @@ def main():
         )
         if st.sidebar.button("Reanalyze", key="sidebar_reanalyze"):
             st.session_state["_needs_reanalyze"] = True
+
+        # Start Over (confirmation before clearing)
+        if st.sidebar.button("Start Over", key="sidebar_start_over"):
+            st.session_state["_confirm_start_over"] = True
+
+        if st.session_state.get("_confirm_start_over"):
+            st.sidebar.warning("Starting over will clear all data. Save your project first if you want to keep it.")
+            _so1, _so2 = st.sidebar.columns(2)
+            with _so1:
+                if st.button("Yes, clear", key="confirm_start_over_yes", type="primary"):
+                    _keys_to_keep = {"_last_upload_id"}
+                    for _k in list(st.session_state.keys()):
+                        if _k not in _keys_to_keep:
+                            del st.session_state[_k]
+                    st.rerun()
+            with _so2:
+                if st.button("Cancel", key="confirm_start_over_no"):
+                    st.session_state.pop("_confirm_start_over", None)
+                    st.rerun()
+
         st.sidebar.divider()
 
     api_key = st.secrets.get("YOUTUBE_API_KEY", "")
@@ -358,386 +394,384 @@ def main():
         )
         return
 
-    # --- Rainbow bar ---
-    st.html(_rainbow_bar)
+    if not _has_data:
+        # --- Main inputs: video source ---
+        input_mode = st.radio(
+            "How do you want to find videos?",
+            ["Paste video URLs", "Upload previous export", "Update existing export"],
+            horizontal=True,
+        )
 
-    # --- Main inputs: video source ---
-    input_mode = st.radio(
-        "How do you want to find videos?",
-        ["Paste video URLs", "Upload previous export", "Update existing export"],
-        horizontal=True,
-    )
+        if input_mode == "Update existing export":
+            st.caption("Upload a previous export and fetch only new comments posted since the last pull.")
+            update_col1, update_col2 = st.columns(2)
+            with update_col1:
+                update_file = st.file_uploader(
+                    "Upload your latest export",
+                    type=["json"],
+                    key="update_upload",
+                    help="The tool will find the most recent comment date and only fetch newer comments.",
+                )
+            with update_col2:
+                update_url = st.text_area(
+                    "Video URL(s) to update (one per line)",
+                    placeholder="https://www.youtube.com/watch?v=...",
+                    height=100,
+                    key="update_url",
+                )
 
-    if input_mode == "Update existing export":
-        st.caption("Upload a previous export and fetch only new comments posted since the last pull.")
-        update_col1, update_col2 = st.columns(2)
-        with update_col1:
-            update_file = st.file_uploader(
-                "Upload your latest export",
+        elif input_mode == "Upload previous export":
+            uploaded = st.file_uploader(
+                "Upload a comments JSON export",
                 type=["json"],
-                key="update_upload",
-                help="The tool will find the most recent comment date and only fetch newer comments.",
+                help="Load a previously exported comments file to re-analyze without fetching from YouTube.",
             )
-        with update_col2:
-            update_url = st.text_area(
-                "Video URL(s) to update (one per line)",
-                placeholder="https://www.youtube.com/watch?v=...",
-                height=100,
-                key="update_url",
+            if uploaded is not None:
+                upload_id = f"{uploaded.name}_{uploaded.size}"
+                if st.session_state.get("_last_upload_id") != upload_id:
+                    try:
+                        data = json.loads(uploaded.read())
+                        st.session_state["raw_comments"] = data["comments"]
+                        st.session_state["search_query"] = data.get("search_query", "Imported")
+                        st.session_state["_last_upload_id"] = upload_id
+
+                        # Restore analysis state if saved in the export
+                        st.session_state["hidden_ids"] = set(data.get("hidden_ids", []))
+                        if "analyzed_comments" in data:
+                            st.session_state["analyzed_comments"] = data["analyzed_comments"]
+                            st.session_state["keywords"] = data.get("keywords", [])
+                            if data.get("preset"):
+                                st.session_state["keyword_preset"] = data["preset"]
+                            if data.get("ai_summary"):
+                                st.session_state["ai_summary"] = data["ai_summary"]
+                        else:
+                            st.session_state.pop("analyzed_comments", None)
+
+                        # Restore multi-analysis tabs (Subtitles & Dubs)
+                        if "multi_analyses" in data:
+                            st.session_state["multi_analyses"] = data["multi_analyses"]
+                        else:
+                            st.session_state["multi_analyses"] = None
+
+                        # Restore custom search results
+                        if "custom_search_results" in data:
+                            st.session_state["custom_search_results"] = data["custom_search_results"]
+                            st.session_state["custom_search_keywords"] = data.get("custom_search_keywords", [])
+                            st.session_state["custom_search_exclude"] = data.get("custom_search_exclude", [])
+
+                        # Restore per-tab AI summaries
+                        for _k, _v in data.get("tab_summaries", {}).items():
+                            st.session_state[_k] = _v
+
+                        _has_multi = data.get("multi_analyses") is not None and len(data.get("multi_analyses", [])) > 0
+                        _has_custom = bool(data.get("custom_search_results"))
+                        _parts = []
+                        if _has_multi:
+                            _match_count = sum(len(m['comments']) for m in data['multi_analyses'])
+                            _parts.append(f"{_match_count:,} keyword matches")
+                        if _has_custom:
+                            _parts.append(f"{len(data['custom_search_results']):,} custom search results")
+                        _detail = f" · {', '.join(_parts)}" if _parts else ""
+                        st.success(f"Loaded **{len(data['comments']):,}** raw comments{_detail}.")
+                    except Exception as e:
+                        st.error(f"Failed to load file: {e}")
+
+            # (Reprocess button moved after function definitions below)
+
+        elif input_mode == "Paste video URLs":
+            url_input = st.text_area(
+                "YouTube video URLs (one per line)",
+                placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ\nhttps://youtu.be/abc123XYZab",
+                height=120,
             )
 
-    elif input_mode == "Upload previous export":
-        uploaded = st.file_uploader(
-            "Upload a comments JSON export",
-            type=["json"],
-            help="Load a previously exported comments file to re-analyze without fetching from YouTube.",
-        )
-        if uploaded is not None:
-            upload_id = f"{uploaded.name}_{uploaded.size}"
-            if st.session_state.get("_last_upload_id") != upload_id:
-                try:
-                    data = json.loads(uploaded.read())
-                    st.session_state["raw_comments"] = data["comments"]
-                    st.session_state["search_query"] = data.get("search_query", "Imported")
-                    st.session_state["_last_upload_id"] = upload_id
+        # (quota estimate moved inline with fetch settings below)
 
-                    # Restore analysis state if saved in the export
-                    st.session_state["hidden_ids"] = set(data.get("hidden_ids", []))
-                    if "analyzed_comments" in data:
-                        st.session_state["analyzed_comments"] = data["analyzed_comments"]
-                        st.session_state["keywords"] = data.get("keywords", [])
-                        if data.get("preset"):
-                            st.session_state["keyword_preset"] = data["preset"]
-                        if data.get("ai_summary"):
-                            st.session_state["ai_summary"] = data["ai_summary"]
-                    else:
-                        st.session_state.pop("analyzed_comments", None)
+        # --- Recover partial fetch ---
+        if "_fetch_in_progress" in st.session_state and st.session_state["_fetch_in_progress"]:
+            partial = st.session_state["_fetch_in_progress"]
+            st.warning(f"A previous fetch was interrupted with **{len(partial):,}** comments saved.")
+            if st.button("Use these comments", key="_use_partial"):
+                st.session_state["raw_comments"] = partial
+                st.session_state["search_query"] = st.session_state.get("search_query", "Interrupted fetch")
+                st.session_state.pop("_fetch_in_progress", None)
+                st.session_state.pop("analyzed_comments", None)
+                st.session_state.pop("hidden_ids", None)
+                st.rerun()
+            if st.button("Discard and start over", key="_discard_partial"):
+                st.session_state.pop("_fetch_in_progress", None)
+                st.rerun()
 
-                    # Restore multi-analysis tabs (Subtitles & Dubs)
-                    if "multi_analyses" in data:
-                        st.session_state["multi_analyses"] = data["multi_analyses"]
-                    else:
-                        st.session_state["multi_analyses"] = None
+        # ===================================================================
+        # PHASE 1: FETCH — hits the API, stores raw comments in session state
+        # ===================================================================
+        if input_mode not in ("Upload previous export", "Update existing export"):
+            # Fetch settings
+            fetch_col1, fetch_col2 = st.columns(2)
+            with fetch_col1:
+                fetch_all = st.checkbox(
+                    "Fetch all comments",
+                    value=True,
+                    help="Fetch every comment on each video. Uncheck to set a limit.",
+                )
+                if not fetch_all:
+                    max_scan = st.number_input(
+                        "Comments to scan per video", min_value=100, max_value=250_000,
+                        value=5000, step=1000,
+                    )
+                else:
+                    max_scan = None
+            with fetch_col2:
+                pass  # fetch settings column
 
-                    # Restore custom search results
-                    if "custom_search_results" in data:
-                        st.session_state["custom_search_results"] = data["custom_search_results"]
-                        st.session_state["custom_search_keywords"] = data.get("custom_search_keywords", [])
-                        st.session_state["custom_search_exclude"] = data.get("custom_search_exclude", [])
+        # Quota estimate (inline, only for fetch modes)
+        if input_mode not in ("Upload previous export", "Update existing export"):
+            _est_videos = len(extract_video_ids(url_input)) if url_input.strip() else 1
 
-                    # Restore per-tab AI summaries
-                    for _k, _v in data.get("tab_summaries", {}).items():
-                        st.session_state[_k] = _v
-
-                    _has_multi = data.get("multi_analyses") is not None and len(data.get("multi_analyses", [])) > 0
-                    _has_custom = bool(data.get("custom_search_results"))
-                    _parts = []
-                    if _has_multi:
-                        _match_count = sum(len(m['comments']) for m in data['multi_analyses'])
-                        _parts.append(f"{_match_count:,} keyword matches")
-                    if _has_custom:
-                        _parts.append(f"{len(data['custom_search_results']):,} custom search results")
-                    _detail = f" · {', '.join(_parts)}" if _parts else ""
-                    st.success(f"Loaded **{len(data['comments']):,}** raw comments{_detail}.")
-                except Exception as e:
-                    st.error(f"Failed to load file: {e}")
-
-        # (Reprocess button moved after function definitions below)
-
-    elif input_mode == "Paste video URLs":
-        url_input = st.text_area(
-            "YouTube video URLs (one per line)",
-            placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ\nhttps://youtu.be/abc123XYZab",
-            height=120,
-        )
-
-    # (quota estimate moved inline with fetch settings below)
-
-    # --- Recover partial fetch ---
-    if "_fetch_in_progress" in st.session_state and st.session_state["_fetch_in_progress"]:
-        partial = st.session_state["_fetch_in_progress"]
-        st.warning(f"A previous fetch was interrupted with **{len(partial):,}** comments saved.")
-        if st.button("Use these comments", key="_use_partial"):
-            st.session_state["raw_comments"] = partial
-            st.session_state["search_query"] = st.session_state.get("search_query", "Interrupted fetch")
-            st.session_state.pop("_fetch_in_progress", None)
-            st.session_state.pop("analyzed_comments", None)
-            st.session_state.pop("hidden_ids", None)
-            st.rerun()
-        if st.button("Discard and start over", key="_discard_partial"):
-            st.session_state.pop("_fetch_in_progress", None)
-            st.rerun()
-
-    # ===================================================================
-    # PHASE 1: FETCH — hits the API, stores raw comments in session state
-    # ===================================================================
-    if input_mode not in ("Upload previous export", "Update existing export"):
-        # Fetch settings
-        fetch_col1, fetch_col2 = st.columns(2)
-        with fetch_col1:
-            fetch_all = st.checkbox(
-                "Fetch all comments",
-                value=True,
-                help="Fetch every comment on each video. Uncheck to set a limit.",
-            )
-            if not fetch_all:
-                max_scan = st.number_input(
-                    "Comments to scan per video", min_value=100, max_value=250_000,
-                    value=5000, step=1000,
+            if fetch_all:
+                st.caption(
+                    "Quota: Unknown (fetching all comments). Each page of 50 comments = 1 unit."
                 )
             else:
-                max_scan = None
-        with fetch_col2:
-            pass  # fetch settings column
+                _pages_per_video = (max_scan + 99) // 100
+                _total_est = _est_videos * _pages_per_video
+                _pct = min(_total_est / 10_000 * 100, 100)
+                st.caption(
+                    f"Estimated quota: ~{_total_est:,} of 10,000 daily units ({_pct:.0f}%)"
+                )
 
-    # Quota estimate (inline, only for fetch modes)
-    if input_mode not in ("Upload previous export", "Update existing export"):
-        _est_videos = len(extract_video_ids(url_input)) if url_input.strip() else 1
-
-        if fetch_all:
-            st.caption(
-                "Quota: Unknown (fetching all comments). Each page of 50 comments = 1 unit."
-            )
-        else:
-            _pages_per_video = (max_scan + 99) // 100
-            _total_est = _est_videos * _pages_per_video
-            _pct = min(_total_est / 10_000 * 100, 100)
-            st.caption(
-                f"Estimated quota: ~{_total_est:,} of 10,000 daily units ({_pct:.0f}%)"
-            )
-
-    if input_mode == "Upload previous export":
-        pass  # Upload handled above, no fetch needed
-    elif input_mode == "Update existing export":
-        if st.button("Fetch New Comments", type="primary"):
-            if not update_file or not update_url or not update_url.strip():
-                st.warning("Please upload an export file and provide at least one video URL.")
-            else:
-                from googleapiclient.errors import HttpError
-                from datetime import datetime as _dt_u
-
-                # Load existing comments
-                try:
-                    existing_data = json.loads(update_file.read())
-                    existing_comments = existing_data.get("comments", [])
-                except Exception as e:
-                    st.error(f"Failed to read export file: {e}")
-                    existing_comments = []
-
-                if not existing_comments:
-                    st.error("Export file contains no comments.")
+        if input_mode == "Upload previous export":
+            pass  # Upload handled above, no fetch needed
+        elif input_mode == "Update existing export":
+            if st.button("Fetch New Comments", type="primary"):
+                if not update_file or not update_url or not update_url.strip():
+                    st.warning("Please upload an export file and provide at least one video URL.")
                 else:
-                    # Find the latest comment date and existing IDs
-                    existing_ids = set()
-                    latest_date = ""
-                    for c in existing_comments:
-                        cid = c.get("comment_id", "")
-                        if cid:
-                            existing_ids.add(cid)
-                        if c.get("date", "") > latest_date:
-                            latest_date = c["date"]
+                    from googleapiclient.errors import HttpError
+                    from datetime import datetime as _dt_u
 
-                    st.info(f"Loaded **{len(existing_comments):,}** existing comments. "
-                            f"Latest comment: **{latest_date[:10]}**. Fetching newer comments...")
+                    # Load existing comments
+                    try:
+                        existing_data = json.loads(update_file.read())
+                        existing_comments = existing_data.get("comments", [])
+                    except Exception as e:
+                        st.error(f"Failed to read export file: {e}")
+                        existing_comments = []
 
-                    youtube = get_youtube_client(api_key)
-                    video_ids = extract_video_ids(update_url)
-                    if not video_ids:
-                        st.warning("No valid video URLs found.")
+                    if not existing_comments:
+                        st.error("Export file contains no comments.")
                     else:
-                        try:
-                            videos = get_video_info(youtube, video_ids)
-                        except HttpError as e:
-                            reason = e.error_details[0]["reason"] if e.error_details else str(e)
-                            st.error(f"YouTube API error: {reason}")
-                            videos = []
+                        # Find the latest comment date and existing IDs
+                        existing_ids = set()
+                        latest_date = ""
+                        for c in existing_comments:
+                            cid = c.get("comment_id", "")
+                            if cid:
+                                existing_ids.add(cid)
+                            if c.get("date", "") > latest_date:
+                                latest_date = c["date"]
 
-                        if videos:
-                            new_comments: list[dict] = []
-                            status = st.status("Fetching new comments...", expanded=True)
+                        st.info(f"Loaded **{len(existing_comments):,}** existing comments. "
+                                f"Latest comment: **{latest_date[:10]}**. Fetching newer comments...")
+
+                        youtube = get_youtube_client(api_key)
+                        video_ids = extract_video_ids(update_url)
+                        if not video_ids:
+                            st.warning("No valid video URLs found.")
+                        else:
                             try:
-                                for video in videos:
-                                    counter = status.empty()
-                                    vid_label = video["title"][:50]
-
-                                    # Fetch with time sort (newest first), stop at cutoff
-                                    page_size = MAX_RESULTS_PER_PAGE
-                                    request = youtube.commentThreads().list(
-                                        part="snippet",
-                                        videoId=video["video_id"],
-                                        maxResults=page_size,
-                                        textFormat="plainText",
-                                        order="time",
-                                    )
-                                    hit_cutoff = False
-                                    while request and not hit_cutoff:
-                                        try:
-                                            response = _api_call_with_retry(request)
-                                        except Exception:
-                                            break
-                                        for item in response.get("items", []):
-                                            thread_id = item["snippet"]["topLevelComment"]["id"]
-                                            if thread_id in existing_ids:
-                                                continue
-                                            snippet = item["snippet"]["topLevelComment"]["snippet"]
-                                            comment_date = snippet["publishedAt"]
-                                            if comment_date <= latest_date:
-                                                hit_cutoff = True
-                                                break
-                                            new_comments.append({
-                                                "author": snippet["authorDisplayName"],
-                                                "comment": snippet["textDisplay"],
-                                                "likes": snippet["likeCount"],
-                                                "replies": item["snippet"]["totalReplyCount"],
-                                                "date": comment_date,
-                                                "video_id": video["video_id"],
-                                                "video_title": video["title"],
-                                                "is_reply": False,
-                                                "comment_id": thread_id,
-                                            })
-                                        counter.markdown(
-                                            f"**{vid_label}** — {len(new_comments):,} new comments found"
-                                        )
-                                        request = youtube.commentThreads().list_next(request, response)
+                                videos = get_video_info(youtube, video_ids)
                             except HttpError as e:
                                 reason = e.error_details[0]["reason"] if e.error_details else str(e)
-                                status.write(f"API error: {reason}")
+                                st.error(f"YouTube API error: {reason}")
+                                videos = []
 
-                            # Merge: new comments + existing (deduped)
-                            merged = new_comments + existing_comments
-                            status.update(
-                                label=f"Found {len(new_comments):,} new comments. "
-                                      f"Total: {len(merged):,}.",
-                                state="complete", expanded=False,
-                            )
+                            if videos:
+                                new_comments: list[dict] = []
+                                status = st.status("Fetching new comments...", expanded=True)
+                                try:
+                                    for video in videos:
+                                        counter = status.empty()
+                                        vid_label = video["title"][:50]
 
-                            # Restore session
-                            st.session_state["raw_comments"] = merged
-                            sq = ", ".join(v["title"] for v in videos)
-                            st.session_state["search_query"] = sq
-                            st.session_state.pop("analyzed_comments", None)
-                            st.session_state.pop("hidden_ids", None)
+                                        # Fetch with time sort (newest first), stop at cutoff
+                                        page_size = MAX_RESULTS_PER_PAGE
+                                        request = youtube.commentThreads().list(
+                                            part="snippet",
+                                            videoId=video["video_id"],
+                                            maxResults=page_size,
+                                            textFormat="plainText",
+                                            order="time",
+                                        )
+                                        hit_cutoff = False
+                                        while request and not hit_cutoff:
+                                            try:
+                                                response = _api_call_with_retry(request)
+                                            except Exception:
+                                                break
+                                            for item in response.get("items", []):
+                                                thread_id = item["snippet"]["topLevelComment"]["id"]
+                                                if thread_id in existing_ids:
+                                                    continue
+                                                snippet = item["snippet"]["topLevelComment"]["snippet"]
+                                                comment_date = snippet["publishedAt"]
+                                                if comment_date <= latest_date:
+                                                    hit_cutoff = True
+                                                    break
+                                                new_comments.append({
+                                                    "author": snippet["authorDisplayName"],
+                                                    "comment": snippet["textDisplay"],
+                                                    "likes": snippet["likeCount"],
+                                                    "replies": item["snippet"]["totalReplyCount"],
+                                                    "date": comment_date,
+                                                    "video_id": video["video_id"],
+                                                    "video_title": video["title"],
+                                                    "is_reply": False,
+                                                    "comment_id": thread_id,
+                                                })
+                                            counter.markdown(
+                                                f"**{vid_label}** — {len(new_comments):,} new comments found"
+                                            )
+                                            request = youtube.commentThreads().list_next(request, response)
+                                except HttpError as e:
+                                    reason = e.error_details[0]["reason"] if e.error_details else str(e)
+                                    status.write(f"API error: {reason}")
 
-                            # Restore analysis state from export if no new analysis needed
-                            if "analyzed_comments" in existing_data and not new_comments:
-                                st.session_state["analyzed_comments"] = existing_data["analyzed_comments"]
-                                st.session_state["hidden_ids"] = set(existing_data.get("hidden_ids", []))
-                                st.session_state["keywords"] = existing_data.get("keywords", [])
+                                # Merge: new comments + existing (deduped)
+                                merged = new_comments + existing_comments
+                                status.update(
+                                    label=f"Found {len(new_comments):,} new comments. "
+                                          f"Total: {len(merged):,}.",
+                                    state="complete", expanded=False,
+                                )
 
-                            st.success(
-                                f"Merged **{len(new_comments):,}** new + "
-                                f"**{len(existing_comments):,}** existing = "
-                                f"**{len(merged):,}** total comments."
-                            )
+                                # Restore session
+                                st.session_state["raw_comments"] = merged
+                                sq = ", ".join(v["title"] for v in videos)
+                                st.session_state["search_query"] = sq
+                                st.session_state.pop("analyzed_comments", None)
+                                st.session_state.pop("hidden_ids", None)
 
-    elif st.button("Fetch Comments", type="primary"):
-        from googleapiclient.errors import HttpError
+                                # Restore analysis state from export if no new analysis needed
+                                if "analyzed_comments" in existing_data and not new_comments:
+                                    st.session_state["analyzed_comments"] = existing_data["analyzed_comments"]
+                                    st.session_state["hidden_ids"] = set(existing_data.get("hidden_ids", []))
+                                    st.session_state["keywords"] = existing_data.get("keywords", [])
 
-        youtube = get_youtube_client(api_key)
+                                st.success(
+                                    f"Merged **{len(new_comments):,}** new + "
+                                    f"**{len(existing_comments):,}** existing = "
+                                    f"**{len(merged):,}** total comments."
+                                )
 
-        try:
-            if input_mode == "Paste video URLs":
-                video_ids = extract_video_ids(url_input)
-                if not video_ids:
-                    st.warning("Please paste at least one valid YouTube URL.")
-                    return
-                with st.spinner("Looking up videos..."):
-                    videos = get_video_info(youtube, video_ids)
-                if not videos:
-                    st.error("Could not find any of the provided video IDs.")
-                    return
-                sq = ", ".join(v["title"] for v in videos)
-        except HttpError as e:
-            reason = e.error_details[0]["reason"] if e.error_details else str(e)
-            if e.resp.status == 403:
-                st.error(
-                    f"**YouTube API error (403):** {reason}\n\n"
-                    "This usually means your daily quota (10,000 units) is exhausted. "
-                    "Quota resets at midnight Pacific Time. You can check usage at "
-                    "[Google Cloud Console](https://console.cloud.google.com/apis/dashboard)."
-                )
-            else:
-                st.error(f"**YouTube API error ({e.resp.status}):** {reason}")
-            return
+        elif st.button("Fetch Comments", type="primary"):
+            from googleapiclient.errors import HttpError
 
-        raw_comments: list[dict] = []
-        st.session_state["_stop_fetch"] = False
-        st.session_state["_fetch_in_progress"] = []
-        status = st.status("Fetching comments...", expanded=True)
+            youtube = get_youtube_client(api_key)
 
-        try:
-            # Pass 1: Fetch top-level comments
-            for i, video in enumerate(videos):
-                if st.session_state.get("_stop_fetch"):
-                    break
-                counter = status.empty()
-                video_label = video["title"][:50]
-
-                def update_counter(count, _label=video_label, _el=counter, _prev=raw_comments):
-                    total = len(_prev) + count
-                    _el.markdown(f"**{_label}** — {count:,} top-level comments ({total:,} total)")
-
-                batch = fetch_comments(
-                    youtube, video["video_id"], max_scan,
-                    on_progress=update_counter,
-                )
-                for c in batch:
-                    c["video_title"] = video["title"]
-                raw_comments.extend(batch)
-                # Save progress so partial results survive interruption
-                st.session_state["_fetch_in_progress"] = list(raw_comments)
-                counter.markdown(
-                    f"**{video_label}** — {len(batch):,} top-level ✓ "
-                    f"({len(raw_comments):,} total)"
-                )
-
-        except HttpError as e:
-            reason = e.error_details[0]["reason"] if e.error_details else str(e)
-            if raw_comments:
-                status.update(
-                    label=f"API error after {len(raw_comments):,} comments — saving what was fetched.",
-                    state="error", expanded=True,
-                )
-                status.write(f"**Error:** {reason}")
+            try:
+                if input_mode == "Paste video URLs":
+                    video_ids = extract_video_ids(url_input)
+                    if not video_ids:
+                        st.warning("Please paste at least one valid YouTube URL.")
+                        return
+                    with st.spinner("Looking up videos..."):
+                        videos = get_video_info(youtube, video_ids)
+                    if not videos:
+                        st.error("Could not find any of the provided video IDs.")
+                        return
+                    sq = ", ".join(v["title"] for v in videos)
+            except HttpError as e:
+                reason = e.error_details[0]["reason"] if e.error_details else str(e)
                 if e.resp.status == 403:
-                    status.write("Daily quota likely exhausted. Resets at midnight PT.")
-            else:
-                status.update(label="API error", state="error")
-                st.error(f"**YouTube API error ({e.resp.status}):** {reason}")
+                    st.error(
+                        f"**YouTube API error (403):** {reason}\n\n"
+                        "This usually means your daily quota (10,000 units) is exhausted. "
+                        "Quota resets at midnight Pacific Time. You can check usage at "
+                        "[Google Cloud Console](https://console.cloud.google.com/apis/dashboard)."
+                    )
+                else:
+                    st.error(f"**YouTube API error ({e.resp.status}):** {reason}")
                 return
-        except Exception as e:
-            if raw_comments:
+
+            raw_comments: list[dict] = []
+            st.session_state["_stop_fetch"] = False
+            st.session_state["_fetch_in_progress"] = []
+            status = st.status("Fetching comments...", expanded=True)
+
+            try:
+                # Pass 1: Fetch top-level comments
+                for i, video in enumerate(videos):
+                    if st.session_state.get("_stop_fetch"):
+                        break
+                    counter = status.empty()
+                    video_label = video["title"][:50]
+
+                    def update_counter(count, _label=video_label, _el=counter, _prev=raw_comments):
+                        total = len(_prev) + count
+                        _el.markdown(f"**{_label}** — {count:,} top-level comments ({total:,} total)")
+
+                    batch = fetch_comments(
+                        youtube, video["video_id"], max_scan,
+                        on_progress=update_counter,
+                    )
+                    for c in batch:
+                        c["video_title"] = video["title"]
+                    raw_comments.extend(batch)
+                    # Save progress so partial results survive interruption
+                    st.session_state["_fetch_in_progress"] = list(raw_comments)
+                    counter.markdown(
+                        f"**{video_label}** — {len(batch):,} top-level ✓ "
+                        f"({len(raw_comments):,} total)"
+                    )
+
+            except HttpError as e:
+                reason = e.error_details[0]["reason"] if e.error_details else str(e)
+                if raw_comments:
+                    status.update(
+                        label=f"API error after {len(raw_comments):,} comments — saving what was fetched.",
+                        state="error", expanded=True,
+                    )
+                    status.write(f"**Error:** {reason}")
+                    if e.resp.status == 403:
+                        status.write("Daily quota likely exhausted. Resets at midnight PT.")
+                else:
+                    status.update(label="API error", state="error")
+                    st.error(f"**YouTube API error ({e.resp.status}):** {reason}")
+                    return
+            except Exception as e:
+                if raw_comments:
+                    status.update(
+                        label=f"Error after {len(raw_comments):,} comments — saving what was fetched.",
+                        state="error", expanded=True,
+                    )
+                    status.write(f"**Error:** {e}")
+                else:
+                    status.update(label="Error", state="error")
+                    st.error(f"**Error:** {e}")
+                    return
+
+            was_stopped = st.session_state.get("_stop_fetch", False)
+            if was_stopped:
                 status.update(
-                    label=f"Error after {len(raw_comments):,} comments — saving what was fetched.",
-                    state="error", expanded=True,
+                    label=f"Stopped — saved {len(raw_comments):,} comments fetched so far.",
+                    state="complete", expanded=False,
                 )
-                status.write(f"**Error:** {e}")
             else:
-                status.update(label="Error", state="error")
-                st.error(f"**Error:** {e}")
-                return
+                status.update(
+                    label=f"Fetched {len(raw_comments):,} comments from {len(videos)} video(s).",
+                    state="complete", expanded=False,
+                )
+            st.session_state.pop("_fetch_in_progress", None)
 
-        was_stopped = st.session_state.get("_stop_fetch", False)
-        if was_stopped:
-            status.update(
-                label=f"Stopped — saved {len(raw_comments):,} comments fetched so far.",
-                state="complete", expanded=False,
-            )
-        else:
-            status.update(
-                label=f"Fetched {len(raw_comments):,} comments from {len(videos)} video(s).",
-                state="complete", expanded=False,
-            )
-        st.session_state.pop("_fetch_in_progress", None)
+            # Store raw (unfiltered) comments
+            st.session_state["raw_comments"] = raw_comments
+            st.session_state["search_query"] = sq
+            st.session_state.pop("analyzed_comments", None)
+            st.session_state.pop("hidden_ids", None)
 
-        # Store raw (unfiltered) comments
-        st.session_state["raw_comments"] = raw_comments
-        st.session_state["search_query"] = sq
-        st.session_state.pop("analyzed_comments", None)
-        st.session_state.pop("hidden_ids", None)
-
-        st.success(f"Fetched **{len(raw_comments):,}** comments from **{len(videos)}** video(s).")
-        st.session_state["_needs_auto_analysis"] = True
+            st.success(f"Fetched **{len(raw_comments):,}** comments from **{len(videos)}** video(s).")
+            st.session_state["_needs_auto_analysis"] = True
 
     # --- Nothing fetched yet ---
     if "raw_comments" not in st.session_state:
@@ -1325,19 +1359,6 @@ def main():
         }
         </style>
         """)
-
-        # Video title(s) above tabs
-        if _video_titles_display:
-            if len(_video_titles_display) == 1:
-                _vt_html = f'<h2 style="margin:0 0 12px 0;font-size:22px;font-weight:700;color:#1a1a1a;">{html_mod.escape(_video_titles_display[0])}</h2>'
-            else:
-                _vt_html = (
-                    '<div style="margin:0 0 12px 0;">'
-                    '<div style="font-size:13px;color:#6b7280;margin-bottom:4px;">Videos</div>'
-                    + "".join(f'<div style="font-size:16px;font-weight:600;color:#1a1a1a;">{html_mod.escape(vt)}</div>' for vt in _video_titles_display)
-                    + '</div>'
-                )
-            st.html(_vt_html)
 
         tab_names = [r["name"] for r in multi_analyses] + ["Custom Search"]
         tabs = st.tabs(tab_names)
