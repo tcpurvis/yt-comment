@@ -11,7 +11,7 @@ from config import MAX_RESULTS_PER_PAGE, SUPPORTED_LANGUAGES, SENTIMENT_COLORS, 
 from analysis import add_sentiment, cluster_into_themes, get_theme_summary, get_sentiment_counts
 from translate import translate_keywords, add_back_translations, back_translate, batch_back_translate, detect_language
 from report import (
-    build_html_report, build_pdf_report,
+    build_html_report, build_pdf_report, build_interactive_html_report,
     _sentiment_badge, _avatar_color, _initials, _format_date,
 )
 
@@ -428,11 +428,12 @@ def main():
 
     # Save project button in sidebar (only when data exists)
     if "raw_comments" in st.session_state:
-        # Reserve slots at the top of the sidebar for Download PDF + Reanalyze.
-        # They're filled later in the run once the PDF has been built and the
-        # analysis has run — otherwise on the first page-2 render those buttons
-        # would be missing until the user clicks anything to trigger a rerun.
+        # Reserve slots at the top of the sidebar for Download PDF, Share link,
+        # and Reanalyze. They're filled later in the run once the reports have
+        # been built — otherwise on the first page-2 render those buttons would
+        # be missing until the user clicks anything to trigger a rerun.
         _pdf_btn_slot = st.sidebar.empty()
+        _html_btn_slot = st.sidebar.empty()
         _reanalyze_btn_slot = st.sidebar.empty()
         st.sidebar.divider()
 
@@ -1824,6 +1825,23 @@ def main():
                 mime="application/pdf",
                 type="primary",
                 key="sidebar_pdf_download",
+            )
+
+            # Interactive HTML (point-in-time, self-contained, shareable)
+            _html_bytes = build_interactive_html_report(
+                search_query=sq,
+                sections=_all_summaries,
+                keywords=kws,
+                thumbnail_video_id=_thumb_vid_pdf,
+                main_title=st.session_state.get("search_query", sq),
+            ).encode("utf-8")
+            _html_btn_slot.download_button(
+                label="Download Shareable HTML",
+                data=_html_bytes,
+                file_name=f"{_title_slug}_{_export_ts}_report.html",
+                mime="text/html",
+                help="Self-contained interactive page — share via email, Slack, or host it yourself.",
+                key="sidebar_html_download",
             )
 
         st.session_state["hidden_ids"] = hidden_ids

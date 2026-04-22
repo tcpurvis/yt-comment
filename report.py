@@ -1,5 +1,6 @@
 import html
 import io
+import json as _json
 import urllib.request
 from datetime import datetime, timezone, timedelta
 
@@ -732,3 +733,485 @@ def _draw_comment(pdf: FPDF, c: dict, show_video_tag: bool = False):
     pdf.set_draw_color(230, 230, 230)
     pdf.line(content_x, pdf.get_y(), pdf.w - 10, pdf.get_y())
     pdf.ln(4)
+
+
+def build_interactive_html_report(
+    search_query: str,
+    sections: list[dict],
+    keywords: list[str] | None = None,
+    thumbnail_video_id: str | None = None,
+    main_title: str | None = None,
+) -> str:
+    """Build a self-contained interactive HTML report.
+
+    sections: list of {"name", "comments", "ai_summary", "one_liner"}.
+    Returns a single HTML string with all data embedded as JSON — no network
+    calls required except for the YouTube thumbnail.
+    """
+    now = datetime.now(_ET).strftime("%B %d, %Y at %I:%M %p ET")
+
+    # Title: derive from sections' video titles if not supplied
+    if not main_title:
+        all_vt = sorted({c.get("video_title", "") for s in sections for c in s.get("comments", []) if c.get("video_title")})
+        if len(all_vt) == 1:
+            main_title = all_vt[0]
+        elif all_vt:
+            main_title = f"{all_vt[0]} + {len(all_vt) - 1} more"
+        else:
+            main_title = search_query or "YouTube Comment Analysis"
+
+    # Overall totals across all sections
+    total_comments = sum(len(s.get("comments", [])) for s in sections)
+
+    # Build the data payload (stripped down — only fields the UI needs)
+    payload_sections = []
+    for s in sections:
+        payload_comments = []
+        for c in s.get("comments", []):
+            payload_comments.append({
+                "id": c.get("_id"),
+                "author": c.get("author", ""),
+                "comment": c.get("comment", ""),
+                "back_translation": c.get("back_translation", ""),
+                "original_language": c.get("original_language", ""),
+                "matched_language": c.get("matched_language", "en"),
+                "likes": c.get("likes", 0),
+                "replies": c.get("replies", 0),
+                "date": c.get("date", ""),
+                "sentiment_label": c.get("sentiment_label", "Neutral"),
+                "sentiment_score": c.get("sentiment_score", 0),
+                "video_id": c.get("video_id", ""),
+                "video_title": c.get("video_title", ""),
+            })
+        payload_sections.append({
+            "name": s.get("name", ""),
+            "one_liner": s.get("one_liner", ""),
+            "ai_summary": s.get("ai_summary", ""),
+            "comments": payload_comments,
+        })
+
+    thumbnail_url = (
+        f"https://img.youtube.com/vi/{thumbnail_video_id}/hqdefault.jpg"
+        if thumbnail_video_id else ""
+    )
+
+    payload = {
+        "title": main_title,
+        "search_query": search_query or "",
+        "keywords": keywords or [],
+        "thumbnail_url": thumbnail_url,
+        "generated_at": now,
+        "total_comments": total_comments,
+        "sentiment_colors": SENTIMENT_COLORS,
+        "sections": payload_sections,
+    }
+    # Serialize data: escape </script> sequences so the JSON is safe inside
+    # a <script type="application/json"> block.
+    data_json = _json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+
+    return _HTML_TEMPLATE.format(
+        title=html.escape(main_title),
+        data_json=data_json,
+    )
+
+
+# The interactive HTML template. Uses f-style format substitution for {title}
+# and {data_json} only — all literal braces inside JS/CSS are doubled.
+_HTML_TEMPLATE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} — Comment Analysis</title>
+<style>
+:root {{
+  --cyan: #00BCE7;
+  --pink: #E64783;
+  --mint: #1CE8B5;
+  --purple: #C94EFF;
+  --yellow: #FFD93D;
+  --coral: #FF5E5B;
+  --text: #0f172a;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --bg: #ffffff;
+  --card-bg: #ffffff;
+}}
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+html, body {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.45;
+}}
+body {{ max-width: 1100px; margin: 0 auto; padding: 24px; }}
+.rainbow {{ display: flex; height: 3px; overflow: hidden; margin: 12px 0 20px; }}
+.rainbow > div {{ flex: 1; }}
+.rainbow > div:nth-child(1) {{ background: #00BCE7; }}
+.rainbow > div:nth-child(2) {{ background: #E64783; }}
+.rainbow > div:nth-child(3) {{ background: #1CE8B5; }}
+.rainbow > div:nth-child(4) {{ background: #C94EFF; }}
+.rainbow > div:nth-child(5) {{ background: #FFD93D; }}
+.rainbow > div:nth-child(6) {{ background: #FF5E5B; }}
+.rainbow > div:nth-child(7) {{ background: #CCF913; }}
+.rainbow > div:nth-child(8) {{ background: #FF9500; }}
+header {{ display: flex; gap: 20px; align-items: center; margin-bottom: 4px; }}
+header img {{ height: 96px; width: auto; border-radius: 8px; object-fit: cover; flex-shrink: 0; }}
+header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
+.meta {{ color: var(--muted); font-size: 13px; margin-top: 6px; }}
+.tabs {{ display: flex; gap: 4px; border-bottom: 2px solid var(--border); margin: 16px 0 20px; }}
+.tab-btn {{
+  padding: 10px 20px; background: none; border: none; border-bottom: 3px solid transparent;
+  font-size: 15px; font-weight: 600; cursor: pointer; color: var(--muted);
+  margin-bottom: -2px; transition: all 0.15s ease;
+}}
+.tab-btn.active {{ color: var(--cyan); border-bottom-color: var(--cyan); }}
+.tab-btn:hover:not(.active) {{ color: var(--text); }}
+.tab-content {{ display: none; }}
+.tab-content.active {{ display: block; }}
+.one-liner {{
+  font-style: italic; color: #4b5563; font-size: 15px;
+  padding: 10px 14px; background: #f9fafb; border-left: 3px solid var(--cyan);
+  border-radius: 4px; margin-bottom: 16px;
+}}
+.ai-summary {{
+  background: #f0fcff; border: 1px solid #b3e8f5; border-radius: 10px;
+  padding: 14px 18px; margin-bottom: 18px; font-size: 14px;
+}}
+.ai-summary p {{ margin: 0 0 8px 0; }}
+.ai-summary ul {{ margin: 4px 0 0 18px; }}
+.ai-summary li {{ margin-bottom: 6px; }}
+.sent-tag {{
+  display: inline-block; padding: 1px 8px; border-radius: 10px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.4px; margin-right: 6px;
+  vertical-align: middle;
+}}
+.sent-tag.pos {{ background: #1CE8B5; color: #033d33; }}
+.sent-tag.neg {{ background: #FF5E5B; color: #5a1111; }}
+.sent-tag.neu {{ background: #C94EFF; color: #2e0b3d; }}
+.sent-bar {{ display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin-bottom: 14px; }}
+.sent-bar > div {{ display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 10px; font-weight: 700; }}
+.filters {{
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  padding: 12px; background: #f9fafb; border-radius: 8px;
+  margin-bottom: 14px; font-size: 13px;
+}}
+.filters input[type="text"], .filters input[type="number"], .filters select {{
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+  font-size: 13px; font-family: inherit;
+}}
+.filters input[type="text"] {{ flex: 1; min-width: 180px; }}
+.filter-group {{ display: flex; align-items: center; gap: 6px; }}
+.filter-group label {{ color: var(--muted); font-size: 12px; font-weight: 600; }}
+.pill-toggle {{
+  padding: 4px 12px; border-radius: 16px; border: 2px solid; cursor: pointer;
+  font-size: 12px; font-weight: 600; background: #fff; user-select: none;
+  transition: all 0.15s ease;
+}}
+.pill-toggle.active {{ color: #fff; }}
+.pill-toggle.Positive.active {{ background: #1CE8B5; border-color: #1CE8B5; color: #033d33; }}
+.pill-toggle.Positive {{ border-color: #1CE8B5; color: #1CE8B5; }}
+.pill-toggle.Negative.active {{ background: #FF5E5B; border-color: #FF5E5B; color: #fff; }}
+.pill-toggle.Negative {{ border-color: #FF5E5B; color: #FF5E5B; }}
+.pill-toggle.Neutral.active {{ background: #C94EFF; border-color: #C94EFF; color: #fff; }}
+.pill-toggle.Neutral {{ border-color: #C94EFF; color: #C94EFF; }}
+.empty {{ color: var(--muted); padding: 20px; text-align: center; font-style: italic; }}
+.card {{
+  display: flex; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid #f3f4f6;
+}}
+.card .avatar {{
+  width: 30px; height: 30px; border-radius: 50%; background: var(--cyan);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 11px; flex-shrink: 0;
+}}
+.card .body {{ flex: 1; min-width: 0; }}
+.card .row1 {{
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px;
+}}
+.card .author {{ font-weight: 600; color: #030303; }}
+.card .date, .card .likes {{ color: #909090; font-size: 11px; }}
+.badge {{
+  display: inline-block; padding: 1px 6px; border-radius: 4px;
+  font-size: 10px; font-weight: 600; color: #fff;
+}}
+.badge.Positive {{ background: #1CE8B5; color: #033d33; }}
+.badge.Negative {{ background: #FF5E5B; }}
+.badge.Neutral {{ background: #C94EFF; }}
+.card .text {{ margin-top: 3px; font-size: 13px; color: #0f172a; line-height: 1.4; }}
+.card .translation {{
+  margin-top: 4px; padding: 4px 8px; background: #f0f4ff;
+  border-left: 2px solid var(--cyan); border-radius: 3px;
+  font-size: 12px; color: #4a5568; font-style: italic;
+}}
+.lang-pill {{
+  padding: 1px 6px; border-radius: 4px; font-size: 10px;
+  font-weight: 500; color: var(--cyan); background: #e0f7fc;
+}}
+.section-header {{ margin: 18px 0 8px; font-size: 14px; font-weight: 700; }}
+.controls-row {{ display: flex; gap: 16px; margin-bottom: 14px; font-size: 13px; color: var(--muted); }}
+.count-summary {{ font-size: 12px; color: var(--muted); margin-bottom: 10px; }}
+.no-results {{ padding: 30px; text-align: center; color: var(--muted); font-style: italic; }}
+</style>
+</head>
+<body>
+<header id="hdr"></header>
+<div class="rainbow">
+  <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+</div>
+<div class="meta" id="meta"></div>
+
+<div class="tabs" id="tabs"></div>
+<div id="panels"></div>
+
+<script id="report-data" type="application/json">{data_json}</script>
+<script>
+(function() {{
+  const DATA = JSON.parse(document.getElementById('report-data').textContent);
+  const LANG_NAMES = {{
+    en: 'English', es: 'Spanish', fr: 'French', de: 'German', pt: 'Portuguese',
+    it: 'Italian', ja: 'Japanese', ko: 'Korean', 'zh-CN': 'Chinese', hi: 'Hindi',
+    ar: 'Arabic', ru: 'Russian', tr: 'Turkish', th: 'Thai', vi: 'Vietnamese',
+    id: 'Indonesian', pl: 'Polish', nl: 'Dutch', sv: 'Swedish', he: 'Hebrew',
+  }};
+  function langName(code) {{ return LANG_NAMES[code] || code || 'Unknown'; }}
+  function escapeHTML(s) {{
+    return String(s || '').replace(/[&<>\"']/g, c =>
+      ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c]);
+  }}
+  function initials(name) {{
+    const parts = String(name || '?').replace(/^@/, '').split(/\s+/).filter(Boolean);
+    if (!parts.length) return '?';
+    return (parts[0][0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
+  }}
+  function avatarColor(name) {{
+    const palette = ['#00BCE7','#E64783','#1CE8B5','#C94EFF','#FFD93D','#FF5E5B','#CCF913','#FF9500'];
+    let h = 0; for (const ch of name || '') h = (h * 31 + ch.charCodeAt(0)) | 0;
+    return palette[Math.abs(h) % palette.length];
+  }}
+  function formatDate(iso) {{
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d)) return '';
+    const now = new Date();
+    const days = Math.floor((now - d) / 86400000);
+    if (days === 0) return 'today';
+    if (days === 1) return 'yesterday';
+    if (days < 7) return days + ' days ago';
+    if (days < 30) return Math.floor(days / 7) + 'w ago';
+    if (days < 365) return Math.floor(days / 30) + 'mo ago';
+    return Math.floor(days / 365) + 'y ago';
+  }}
+  function renderAISummary(md) {{
+    if (!md) return '';
+    // Convert [POS]/[NEG]/[NEU] tags to pills
+    md = md.replace(/\[(POS|NEG|NEU)\]/g, (_, t) => {{
+      const label = {{POS:'POSITIVE', NEG:'NEGATIVE', NEU:'NEUTRAL'}}[t];
+      const cls = {{POS:'pos', NEG:'neg', NEU:'neu'}}[t];
+      return '<span class="sent-tag ' + cls + '">' + label + '</span>';
+    }});
+    const lines = md.split('\n');
+    let html = '', inUL = false;
+    for (const line of lines) {{
+      const trimmed = line.trim();
+      if (trimmed.startsWith('- ')) {{
+        if (!inUL) {{ html += '<ul>'; inUL = true; }}
+        html += '<li>' + inlineFmt(trimmed.slice(2)) + '</li>';
+      }} else {{
+        if (inUL) {{ html += '</ul>'; inUL = false; }}
+        if (trimmed) html += '<p>' + inlineFmt(trimmed) + '</p>';
+      }}
+    }}
+    if (inUL) html += '</ul>';
+    return html;
+  }}
+  function inlineFmt(s) {{
+    // Preserve sentiment pills as already-emitted HTML (they have < and >).
+    // Use tokenization to protect them during bold/italic replacement.
+    const tokens = []; let idx = 0;
+    s = s.replace(/<span class="sent-tag[^"]*">[^<]*<\/span>/g, m => {{
+      tokens.push(m); return '' + (idx++) + '';
+    }});
+    s = escapeHTML(s);
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^*])\*([^*]+)\*([^*]|$)/g, '$1<em>$2</em>$3');
+    s = s.replace(/(\d+)/g, (_, i) => tokens[+i]);
+    return s;
+  }}
+  function sentimentBar(counts) {{
+    const total = counts.Positive + counts.Negative + counts.Neutral;
+    if (!total) return '';
+    const bits = [];
+    for (const lbl of ['Positive', 'Neutral', 'Negative']) {{
+      const n = counts[lbl] || 0;
+      if (!n) continue;
+      const pct = (n / total * 100).toFixed(1);
+      const color = DATA.sentiment_colors[lbl];
+      bits.push('<div style="width:' + pct + '%;background:' + color + ';">' +
+                (pct >= 8 ? n + ' · ' + pct + '%' : '') + '</div>');
+    }}
+    return '<div class="sent-bar">' + bits.join('') + '</div>';
+  }}
+  function countSentiments(comments) {{
+    const c = {{Positive: 0, Negative: 0, Neutral: 0}};
+    for (const x of comments) c[x.sentiment_label]++;
+    return c;
+  }}
+  function renderCard(c) {{
+    const ini = initials(c.author);
+    const bg = avatarColor(c.author);
+    const dateStr = formatDate(c.date);
+    const langPill = c.matched_language && !['en','all'].includes(c.matched_language)
+      ? '<span class="lang-pill">' + langName(c.matched_language) + '</span>' : '';
+    const likes = c.likes > 0 ? '<span class="likes">👍 ' + c.likes + '</span>' : '';
+    const translation = c.back_translation && c.back_translation !== c.comment
+      ? '<div class="translation">🌐 ' + escapeHTML(c.back_translation) + '</div>' : '';
+    return '<div class="card" data-id="' + c.id + '">' +
+      '<div class="avatar" style="background:' + bg + ';">' + ini + '</div>' +
+      '<div class="body">' +
+        '<div class="row1">' +
+          '<span class="author">' + escapeHTML(c.author) + '</span>' +
+          '<span class="date">' + dateStr + '</span>' +
+          '<span class="badge ' + c.sentiment_label + '">' + c.sentiment_label + '</span>' +
+          langPill + likes +
+        '</div>' +
+        '<div class="text">' + escapeHTML(c.comment) + '</div>' +
+        translation +
+      '</div>' +
+    '</div>';
+  }}
+
+  // ----- Header -----
+  const hdr = document.getElementById('hdr');
+  const thumb = DATA.thumbnail_url
+    ? '<img src="' + DATA.thumbnail_url + '" alt="">' : '';
+  hdr.innerHTML = thumb + '<h1>' + escapeHTML(DATA.title) + '</h1>';
+  document.getElementById('meta').textContent =
+    'Generated ' + DATA.generated_at + ' · ' + DATA.total_comments.toLocaleString() + ' total comments';
+
+  // ----- Tabs -----
+  const tabsEl = document.getElementById('tabs');
+  const panelsEl = document.getElementById('panels');
+  DATA.sections.forEach((sec, i) => {{
+    const btn = document.createElement('button');
+    btn.className = 'tab-btn' + (i === 0 ? ' active' : '');
+    btn.dataset.tab = i;
+    btn.textContent = sec.name + ' (' + sec.comments.length.toLocaleString() + ')';
+    btn.addEventListener('click', () => {{
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('panel-' + i).classList.add('active');
+    }});
+    tabsEl.appendChild(btn);
+
+    const panel = document.createElement('section');
+    panel.id = 'panel-' + i;
+    panel.className = 'tab-content' + (i === 0 ? ' active' : '');
+    panelsEl.appendChild(panel);
+    renderPanel(panel, sec, i);
+  }});
+
+  function renderPanel(panel, sec, i) {{
+    const counts = countSentiments(sec.comments);
+    const langs = [...new Set(sec.comments.map(c => c.matched_language || 'en'))].sort();
+    const langOptions = ['<option value="">All languages</option>']
+      .concat(langs.map(l => '<option value="' + l + '">' + langName(l) + '</option>'))
+      .join('');
+
+    const oneLinerHTML = sec.one_liner
+      ? '<div class="one-liner">' + escapeHTML(sec.one_liner) + '</div>' : '';
+    const aiSummaryHTML = sec.ai_summary
+      ? '<div class="ai-summary">' + renderAISummary(sec.ai_summary) + '</div>' : '';
+
+    panel.innerHTML =
+      oneLinerHTML + aiSummaryHTML + sentimentBar(counts) +
+      '<div class="filters">' +
+        '<input type="text" class="f-search" placeholder="Search within comments…">' +
+        '<div class="filter-group"><label>Lang</label>' +
+          '<select class="f-lang">' + langOptions + '</select>' +
+        '</div>' +
+        '<div class="filter-group"><label>Min likes</label>' +
+          '<input type="number" class="f-likes" value="0" min="0" style="width:64px;">' +
+        '</div>' +
+        '<div class="filter-group"><label>Sort</label>' +
+          '<select class="f-sort">' +
+            '<option value="date-desc">Date (newest)</option>' +
+            '<option value="date-asc">Date (oldest)</option>' +
+            '<option value="likes-desc">Likes (most)</option>' +
+            '<option value="likes-asc">Likes (fewest)</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="filter-group">' +
+          '<span class="pill-toggle Positive active" data-s="Positive">Positive</span>' +
+          '<span class="pill-toggle Neutral active" data-s="Neutral">Neutral</span>' +
+          '<span class="pill-toggle Negative active" data-s="Negative">Negative</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="count-summary"></div>' +
+      '<div class="comments-host"></div>';
+
+    const state = {{
+      sentiments: new Set(['Positive', 'Neutral', 'Negative']),
+      lang: '', minLikes: 0, search: '', sort: 'date-desc',
+    }};
+    const host = panel.querySelector('.comments-host');
+    const countEl = panel.querySelector('.count-summary');
+
+    function refresh() {{
+      const search = state.search.toLowerCase().trim();
+      let filtered = sec.comments.filter(c => {{
+        if (!state.sentiments.has(c.sentiment_label)) return false;
+        if (state.lang && c.matched_language !== state.lang) return false;
+        if ((c.likes || 0) < state.minLikes) return false;
+        if (search) {{
+          const hay = (c.comment + ' ' + (c.back_translation || '') + ' ' + c.author).toLowerCase();
+          if (!hay.includes(search)) return false;
+        }}
+        return true;
+      }});
+      const [field, dir] = state.sort.split('-');
+      filtered.sort((a, b) => {{
+        let av = field === 'date' ? (a.date || '') : (a.likes || 0);
+        let bv = field === 'date' ? (b.date || '') : (b.likes || 0);
+        return dir === 'asc' ? (av < bv ? -1 : av > bv ? 1 : 0) : (av < bv ? 1 : av > bv ? -1 : 0);
+      }});
+
+      countEl.textContent = 'Showing ' + filtered.length.toLocaleString() + ' of '
+        + sec.comments.length.toLocaleString() + ' comments';
+
+      if (!filtered.length) {{
+        host.innerHTML = '<div class="no-results">No comments match the current filters.</div>';
+        return;
+      }}
+      // Group by sentiment for the output (preserves sort order within each group)
+      let out = '';
+      for (const lbl of ['Positive', 'Neutral', 'Negative']) {{
+        const grp = filtered.filter(c => c.sentiment_label === lbl);
+        if (!grp.length) continue;
+        const emoji = {{Positive:'😊', Negative:'😞', Neutral:'😐'}}[lbl];
+        out += '<div class="section-header" style="color:' + DATA.sentiment_colors[lbl] + ';">' +
+               emoji + ' ' + lbl + ' (' + grp.length + ')</div>';
+        out += grp.map(renderCard).join('');
+      }}
+      host.innerHTML = out;
+    }}
+
+    panel.querySelector('.f-search').addEventListener('input', e => {{ state.search = e.target.value; refresh(); }});
+    panel.querySelector('.f-lang').addEventListener('change', e => {{ state.lang = e.target.value; refresh(); }});
+    panel.querySelector('.f-likes').addEventListener('input', e => {{ state.minLikes = +e.target.value || 0; refresh(); }});
+    panel.querySelector('.f-sort').addEventListener('change', e => {{ state.sort = e.target.value; refresh(); }});
+    panel.querySelectorAll('.pill-toggle').forEach(p => {{
+      p.addEventListener('click', () => {{
+        const s = p.dataset.s;
+        if (state.sentiments.has(s)) {{ state.sentiments.delete(s); p.classList.remove('active'); }}
+        else {{ state.sentiments.add(s); p.classList.add('active'); }}
+        refresh();
+      }});
+    }});
+
+    refresh();
+  }}
+}})();
+</script>
+</body>
+</html>
+"""
