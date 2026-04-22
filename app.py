@@ -50,7 +50,13 @@ def generate_ai_summary(comments: list[dict], search_query: str) -> str:
         "the overall tone and what people are talking about, followed by 3-5 bullet "
         "points highlighting the most notable specific themes or patterns. "
         "Be specific — reference actual topics from the comments, not generic observations. "
-        "Use markdown formatting (- for bullets)."
+        "Use markdown formatting (- for bullets). "
+        "Every bullet MUST start with a sentiment tag in square brackets indicating "
+        "the dominant sentiment of that theme: [POS] if viewers are mostly positive, "
+        "[NEG] if mostly negative, [NEU] if mixed or neutral. Example:\n"
+        "- [POS] Viewers love the professional dubbing quality.\n"
+        "- [NEG] Many complain about missing subtitles for their language.\n"
+        "- [NEU] Opinions are split on whether the new voice actor fits the character."
     )
 
     try:
@@ -63,6 +69,32 @@ def generate_ai_summary(comments: list[dict], search_query: str) -> str:
         return response.content[0].text
     except Exception as e:
         return f"*Could not generate AI summary: {e}*"
+
+
+_SENTIMENT_TAG_STYLE = {
+    "POS": ("Positive", "#1CE8B5", "#033d33"),
+    "NEG": ("Negative", "#FF5E5B", "#5a1111"),
+    "NEU": ("Neutral",  "#C94EFF", "#2e0b3d"),
+}
+
+
+def _decorate_ai_summary(text: str) -> str:
+    """Replace [POS]/[NEG]/[NEU] sentiment tags in an AI summary with
+    colored HTML badges so the user can see each bullet's polarity."""
+    if not text:
+        return text
+
+    def _repl(match: re.Match) -> str:
+        tag = match.group(1).upper()
+        label, bg, fg = _SENTIMENT_TAG_STYLE[tag]
+        return (
+            f'<span style="display:inline-block;padding:1px 8px;'
+            f'border-radius:10px;background:{bg};color:{fg};'
+            f'font-size:10px;font-weight:700;letter-spacing:0.4px;'
+            f'margin-right:6px;vertical-align:middle;">{label.upper()}</span>'
+        )
+
+    return re.sub(r"\[(POS|NEG|NEU)\]", _repl, text)
 
 
 def generate_one_line_summary(comments: list[dict], section_name: str) -> str:
@@ -1533,7 +1565,7 @@ def main():
                                 st.session_state["ai_summary_custom"] = _edited_cs
                                 _ai_cs = _edited_cs
                         with _pv_cs:
-                            st.markdown(_ai_cs, unsafe_allow_html=True)
+                            st.markdown(_decorate_ai_summary(_ai_cs), unsafe_allow_html=True)
 
             # Clear button
             if st.button("Clear search results", key="clear_custom_search"):
@@ -1731,7 +1763,7 @@ def main():
                                     st.session_state[_ai_key] = _edited
                                     _ai_sum = _edited
                             with _pv_tab:
-                                st.markdown(_ai_sum, unsafe_allow_html=True)
+                                st.markdown(_decorate_ai_summary(_ai_sum), unsafe_allow_html=True)
 
                 # Apply sidebar filters to this tab's comments
                 _filtered_tab = _tab_comments
@@ -1984,7 +2016,7 @@ def main():
                         st.session_state["ai_summary"] = edited_summary
                         ai_summary = edited_summary
                 with preview_tab:
-                    st.markdown(ai_summary, unsafe_allow_html=True)
+                    st.markdown(_decorate_ai_summary(ai_summary), unsafe_allow_html=True)
 
                 if summary_stale:
                     st.warning("Comments have changed since this summary was generated. "

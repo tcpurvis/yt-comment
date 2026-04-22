@@ -286,8 +286,16 @@ def _safe(text: str) -> str:
     return text
 
 
+_SENTIMENT_TAG_COLORS = {
+    "POS": ("POSITIVE", (28, 232, 181)),   # mint
+    "NEG": ("NEGATIVE", (255, 94, 91)),    # coral
+    "NEU": ("NEUTRAL",  (201, 78, 255)),   # purple
+}
+
+
 def _render_markdown_text(pdf: FPDF, text: str, font_size: float = 9, line_height: float = 4.5):
-    """Render text with **bold** markdown and - bullet points into the PDF."""
+    """Render text with **bold** markdown and - bullet points into the PDF.
+    Also converts leading [POS]/[NEG]/[NEU] tags into colored pill badges."""
     import re as _re
     width = pdf.w - 20
 
@@ -309,6 +317,26 @@ def _render_markdown_text(pdf: FPDF, text: str, font_size: float = 9, line_heigh
         else:
             pdf.set_x(10)
             indent_w = width
+
+        # Sentiment tag pill ([POS]/[NEG]/[NEU]) — consume it if present and draw a pill
+        _tag_match = _re.match(r"\[(POS|NEG|NEU)\]\s*", line)
+        if _tag_match:
+            tag = _tag_match.group(1)
+            label, (tr, tg, tb) = _SENTIMENT_TAG_COLORS[tag]
+            pill_w = 16
+            pill_h = 3.8
+            x_pill = pdf.get_x()
+            y_pill = pdf.get_y() + 0.5
+            pdf.set_fill_color(tr, tg, tb)
+            pdf.rect(x_pill, y_pill, pill_w, pill_h, "F")
+            pdf.set_font("Lato", "B", 6.5)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_xy(x_pill, y_pill - 0.4)
+            pdf.cell(pill_w, pill_h + 0.8, label, align="C")
+            pdf.set_xy(x_pill + pill_w + 2, y_pill - 0.5)
+            pdf.set_text_color(26, 26, 26)
+            pdf.set_font("Lato", "", font_size)
+            line = line[_tag_match.end():]
 
         # Split by formatting markers: **bold**, *italic*, <u>underline</u>
         parts = _re.split(r"(\*\*.*?\*\*|\*.*?\*|<u>.*?</u>)", line)
