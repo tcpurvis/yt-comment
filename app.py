@@ -801,6 +801,7 @@ def main():
         st.session_state.pop("hidden_ids", None)
 
         st.success(f"Fetched **{len(raw_comments):,}** comments from **{len(videos)}** video(s).")
+        st.session_state["_needs_auto_analysis"] = True
 
     # --- Nothing fetched yet ---
     if "raw_comments" not in st.session_state:
@@ -839,155 +840,7 @@ def main():
                 f"({v_top:,} top-level, {v_replies:,} replies)"
             )
 
-    # (Save Project button is in the sticky header)
-
-    _analysis_done = "analyzed_comments" in st.session_state
-    _analyze_expander = st.expander(
-        "**Run Initial Comment Analysis**",
-        expanded=not _analysis_done,
-    )
-    with _analyze_expander:
-        st.caption(
-            f"**{total_raw:,}** cached comments available. "
-            "Change filters and re-analyze without re-fetching."
-        )
-
-    with _analyze_expander:
-        search_all = st.checkbox(
-        "Return all comments (skip keyword filter)",
-        help="Include every comment without keyword filtering. "
-             "Useful when you want to analyze all discussion on specific videos.",
-        key="search_all",
-    )
-
-    with _analyze_expander:
-        if not search_all:
-            # Preset selector — Subtitles & Dubs is the default
-            _all_presets = list(KEYWORD_PRESETS.keys())
-            # Put "Subtitles & Dubs" first if it exists
-            if "Subtitles & Dubs" in _all_presets:
-                _all_presets.remove("Subtitles & Dubs")
-                _all_presets.insert(0, "Subtitles & Dubs")
-            preset_names = _all_presets + ["Custom"]
-            selected_preset = st.selectbox(
-                "Analysis type",
-                options=preset_names,
-                help="Select an analysis type or choose Custom for manual keyword search.",
-                key="keyword_preset",
-            )
-
-            preset_data = KEYWORD_PRESETS.get(selected_preset, {})
-            is_multi_preset = preset_data.get("multi", False)
-
-            if is_multi_preset:
-                # Combined preset — will run multiple analyses
-                multi_analysis_names = preset_data["analyses"]
-                default_kw = ""
-                preset_translations = {}
-                st.info(f"This will run **{len(multi_analysis_names)}** analyses: {', '.join(multi_analysis_names)}")
-            elif selected_preset != "Custom":
-                preset = KEYWORD_PRESETS[selected_preset]
-                default_kw = ", ".join(preset["keywords"])
-                preset_translations = preset.get("translations", {})
-                is_multi_preset = False
-                multi_analysis_names = []
-            else:
-                default_kw = ""
-                preset_translations = {}
-                is_multi_preset = False
-                multi_analysis_names = []
-
-            # Update keyword input and clear translation cache when preset changes
-            if st.session_state.get("_last_preset") != selected_preset:
-                if not is_multi_preset:
-                    st.session_state["keyword_input"] = default_kw
-                st.session_state["_last_preset"] = selected_preset
-                st.session_state.pop("_translation_cache_key", None)
-                # Auto-select all languages for multi presets
-                if is_multi_preset:
-                    st.session_state["selected_langs"] = list(SUPPORTED_LANGUAGES.keys())
-                st.session_state.pop("_translated_kw_map", None)
-
-            if not is_multi_preset:
-                keyword_input = st.text_input(
-                    "Filter comments by keywords (comma-separated)",
-                    placeholder="e.g. great, awesome, helpful",
-                    key="keyword_input",
-                )
-                keywords = [k.strip() for k in keyword_input.split(",") if k.strip()]
-
-                exclude_input = st.text_input(
-                    "Exclude comments containing (comma-separated)",
-                    placeholder="e.g. spam, subscribe, giveaway",
-                    help="Comments matching any of these words will be excluded.",
-                    key="exclude_input",
-                )
-                exclude_keywords = [k.strip() for k in exclude_input.split(",") if k.strip()]
-            else:
-                keywords = []
-                exclude_keywords = []
-        else:
-            keywords = []
-            exclude_keywords = []
-            preset_translations = {}
-            selected_preset = "Custom"
-
-        # --- Multi-Language Search ---
-        selected_langs = st.multiselect(
-            "Also search in these languages",
-            options=list(SUPPORTED_LANGUAGES.keys()),
-            help="Keywords will be translated and matched against cached comments. "
-                 "Matching comments will include a back-translation to English.",
-            key="selected_langs",
-        )
-        selected_lang_codes = [SUPPORTED_LANGUAGES[n] for n in selected_langs]
-
-    # --- Translated keywords preview + edit ---
-    translated_kw_map: dict[str, list[str]] = {}
-    if selected_langs and keywords and not search_all:
-        # Cache key includes preset name so changing preset resets translations
-        cache_key = f"{selected_preset}|{','.join(keywords)}|{','.join(selected_langs)}"
-        if st.session_state.get("_translation_cache_key") != cache_key:
-            # Clear old per-language text input keys so they pick up new values
-            for lang_name in SUPPORTED_LANGUAGES:
-                lc = SUPPORTED_LANGUAGES[lang_name]
-                st.session_state.pop(f"trans_{lc}", None)
-
-            new_map = {}
-            needs_translation = []
-            for lang_name in selected_langs:
-                lang_code = SUPPORTED_LANGUAGES[lang_name]
-                if lang_code in preset_translations and preset_translations[lang_code]:
-                    new_map[lang_code] = preset_translations[lang_code]
-                else:
-                    needs_translation.append((lang_name, lang_code))
-
-            if needs_translation:
-                with st.spinner("Translating keywords..."):
-                    for lang_name, lang_code in needs_translation:
-                        translated = translate_keywords(keywords, lang_code)
-                        new_map[lang_code] = translated
-
-            st.session_state["_translated_kw_map"] = new_map
-            st.session_state["_translation_cache_key"] = cache_key
-
-        stored_map = st.session_state.get("_translated_kw_map", {})
-
-        with _analyze_expander:
-            st.markdown("**Translated keywords** — edit any translation before analyzing:")
-            for lang_name in selected_langs:
-                lang_code = SUPPORTED_LANGUAGES[lang_name]
-                current = stored_map.get(lang_code, [])
-                if f"trans_{lang_code}" not in st.session_state:
-                    st.session_state[f"trans_{lang_code}"] = ", ".join(current)
-                edited = st.text_input(
-                    f"{lang_name} ({lang_code})",
-                    key=f"trans_{lang_code}",
-                )
-                translated_kw_map[lang_code] = [k.strip() for k in edited.split(",") if k.strip()]
-
-    with _analyze_expander:
-        _do_analyze = st.button("Run Analysis", type="primary")
+    # (Save Project button is in the sidebar)
 
     def _run_single_analysis(raw, kw_list, excl_list, trans_map, status_obj, label=""):
         """Run filter + sentiment + clustering on raw comments. Returns list or empty."""
@@ -1044,83 +897,53 @@ def main():
 
         return matched_a
 
-    if _do_analyze:
-        # Determine if multi-analysis
-        _is_multi = (not search_all
-                     and selected_preset in KEYWORD_PRESETS
-                     and KEYWORD_PRESETS[selected_preset].get("multi"))
+    def _auto_run_subtitles_dubs(raw_comments):
+        """Auto-run Subtitles & Dubs analysis in all languages."""
+        preset_data = KEYWORD_PRESETS["Subtitles & Dubs"]
+        multi_names = preset_data["analyses"]
+        all_lang_names = list(SUPPORTED_LANGUAGES.keys())
 
-        if not search_all and not _is_multi and not keywords:
-            st.warning("Enter at least one keyword or check 'Return all comments'.")
-            return
+        status = st.status("Running Subtitles & Dubs analysis...", expanded=True)
+        multi_results = []
+        for mi, analysis_name in enumerate(multi_names):
+            status.update(label=f"Analyzing {analysis_name} ({mi+1}/{len(multi_names)})...")
+            sub_preset = KEYWORD_PRESETS[analysis_name]
+            sub_kw = sub_preset["keywords"]
+            sub_trans: dict[str, list[str]] = {}
+            for lang_name in all_lang_names:
+                lc = SUPPORTED_LANGUAGES[lang_name]
+                if lc in sub_preset.get("translations", {}):
+                    sub_trans[lc] = sub_preset["translations"][lc]
+                else:
+                    sub_trans[lc] = translate_keywords(sub_kw, lc)
 
-        status = st.status("Analyzing...", expanded=True)
+            result = _run_single_analysis(
+                raw_comments, sub_kw, [], sub_trans, status, label=analysis_name
+            )
+            multi_results.append({"name": analysis_name, "comments": result})
 
-        if _is_multi:
-            multi_names = KEYWORD_PRESETS[selected_preset]["analyses"]
-            multi_results = []
-            for mi, analysis_name in enumerate(multi_names):
-                status.update(label=f"Running {analysis_name} ({mi+1}/{len(multi_names)})...")
-                sub_preset = KEYWORD_PRESETS[analysis_name]
-                sub_kw = sub_preset["keywords"]
-                # Build translation map from preset + any user edits
-                sub_trans: dict[str, list[str]] = {}
-                for lang_name in (st.session_state.get("selected_langs") or []):
-                    lc = SUPPORTED_LANGUAGES[lang_name]
-                    if lc in sub_preset.get("translations", {}):
-                        sub_trans[lc] = sub_preset["translations"][lc]
-                    else:
-                        sub_trans[lc] = translate_keywords(sub_kw, lc)
+        status.update(label="Analysis complete.", state="complete", expanded=False)
 
-                result = _run_single_analysis(
-                    raw_comments, sub_kw, [], sub_trans, status, label=analysis_name
-                )
-                multi_results.append({"name": analysis_name, "comments": result})
+        st.session_state["multi_analyses"] = multi_results
+        st.session_state["analyzed_comments"] = multi_results[0]["comments"] if multi_results else []
+        st.session_state["hidden_ids"] = set()
+        st.session_state["keywords"] = []
+        st.session_state["keyword_preset"] = "Subtitles & Dubs"
+        st.session_state["selected_langs"] = all_lang_names
+        st.session_state.pop("ai_summary", None)
+        st.session_state.pop("ai_summary_0", None)
+        st.session_state.pop("ai_summary_1", None)
+        st.session_state.pop("custom_search_results", None)
+        for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
+                   "fs_text_exclude", "fs_min_likes", "fs_sort", "fs_reply_type"]:
+            st.session_state.pop(k, None)
 
-            status.update(label="Analysis complete.", state="complete", expanded=False)
+        total_matches = sum(len(r["comments"]) for r in multi_results)
+        st.success(f"**{total_matches:,}** total matches across {len(multi_names)} analyses.")
 
-            st.session_state["multi_analyses"] = multi_results
-            st.session_state["analyzed_comments"] = multi_results[0]["comments"] if multi_results else []
-            st.session_state["hidden_ids"] = set()
-            st.session_state["keywords"] = []
-            st.session_state.pop("ai_summary", None)
-            st.session_state.pop("ai_summary_0", None)
-            st.session_state.pop("ai_summary_1", None)
-            for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
-                       "fs_text_exclude", "fs_min_likes", "fs_sort", "fs_reply_type"]:
-                st.session_state.pop(k, None)
-
-            total_matches = sum(len(r["comments"]) for r in multi_results)
-            st.success(f"**{total_matches:,}** total matches across {len(multi_names)} analyses.")
-
-        else:
-            if search_all:
-                status.update(label="Loading all comments...")
-                matched = [dict(c, matched_language="all") for c in raw_comments]
-                add_sentiment(matched)
-                cluster_into_themes(matched)
-                for idx, c in enumerate(matched):
-                    c["_id"] = idx
-            else:
-                matched = _run_single_analysis(
-                    raw_comments, keywords, exclude_keywords, translated_kw_map, status
-                )
-
-            status.update(label="Analysis complete.", state="complete", expanded=False)
-
-            if not matched:
-                st.warning("No comments matched your filters.")
-                return
-
-            st.session_state["analyzed_comments"] = matched
-            st.session_state["multi_analyses"] = None
-            st.session_state["hidden_ids"] = set()
-            st.session_state["keywords"] = keywords
-            st.session_state.pop("ai_summary", None)
-            for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
-                       "fs_text_exclude", "fs_min_likes", "fs_sort", "fs_reply_type"]:
-                st.session_state.pop(k, None)
-            st.success(f"**{len(matched):,}** comments match your filters.")
+    # Auto-run analysis after fetch
+    if st.session_state.pop("_needs_auto_analysis", False):
+        _auto_run_subtitles_dubs(raw_comments)
 
     # --- Nothing analyzed yet ---
     if "analyzed_comments" not in st.session_state:
