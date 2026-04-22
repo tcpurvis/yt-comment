@@ -350,7 +350,16 @@ def main():
         from datetime import datetime as _dt_h
         _exp_ts_h = _dt_h.now().strftime("%Y-%m-%d_%H%M%S")
 
-        _payload_h: dict = {"search_query": _sq_h, "comments": _raw_h}
+        # Collect video IDs (from current session or derived from comments) so the
+        # loaded project can trigger an Update fetch without re-pasting URLs.
+        _vids_h = st.session_state.get("video_ids") or sorted(
+            {c["video_id"] for c in _raw_h if c.get("video_id")}
+        )
+        _payload_h: dict = {
+            "search_query": _sq_h,
+            "comments": _raw_h,
+            "video_ids": list(_vids_h),
+        }
         if "analyzed_comments" in st.session_state:
             _payload_h["analyzed_comments"] = st.session_state["analyzed_comments"]
             _payload_h["hidden_ids"] = list(st.session_state.get("hidden_ids", set()))
@@ -380,6 +389,12 @@ def main():
             mime="application/json",
             key="save_project_sidebar",
         )
+
+        # Update — re-fetch newer comments for the videos in this session
+        if st.session_state.get("video_ids"):
+            if st.sidebar.button("Update", key="sidebar_update", help="Fetch comments posted since the last pull for this session's videos"):
+                st.session_state["_needs_session_update"] = True
+                st.rerun()
 
         # Start Over (confirmation before clearing)
         if st.sidebar.button("Start Over", key="sidebar_start_over"):
@@ -450,6 +465,11 @@ def main():
                         st.session_state["raw_comments"] = data["comments"]
                         st.session_state["search_query"] = data.get("search_query", "Imported")
                         st.session_state["_last_upload_id"] = upload_id
+                        # Preserve video IDs so the Update button can re-fetch without re-pasting URLs
+                        _loaded_vids = data.get("video_ids") or sorted(
+                            {c["video_id"] for c in data["comments"] if c.get("video_id")}
+                        )
+                        st.session_state["video_ids"] = list(_loaded_vids)
 
                         # Restore analysis state if saved in the export
                         st.session_state["hidden_ids"] = set(data.get("hidden_ids", []))
@@ -666,6 +686,12 @@ def main():
                                 st.session_state["raw_comments"] = merged
                                 sq = ", ".join(v["title"] for v in videos)
                                 st.session_state["search_query"] = sq
+                                # Preserve video IDs (union of existing + newly supplied)
+                                _existing_vids = existing_data.get("video_ids") or sorted(
+                                    {c["video_id"] for c in existing_comments if c.get("video_id")}
+                                )
+                                _merged_vids = list(dict.fromkeys(list(_existing_vids) + [v["video_id"] for v in videos]))
+                                st.session_state["video_ids"] = _merged_vids
 
                                 # Restore all existing analysis state (preserves user overrides)
                                 _existing_multi = existing_data.get("multi_analyses")
@@ -799,6 +825,7 @@ def main():
             # Store raw (unfiltered) comments
             st.session_state["raw_comments"] = raw_comments
             st.session_state["search_query"] = sq
+            st.session_state["video_ids"] = [v["video_id"] for v in videos]
             st.session_state.pop("analyzed_comments", None)
             st.session_state.pop("hidden_ids", None)
 
@@ -938,6 +965,103 @@ def main():
                     with st.spinner(f"Generating AI summary for {mr['name']}..."):
                         _sum = generate_ai_summary(mr["comments"], search_query)
                         st.session_state[_ai_key] = _sum
+
+    # Session Update — re-fetch newer comments for the videos already loaded in this session.
+    # Uses the same delta fetch logic as "Update existing export" but operates on in-memory state.
+    if st.session_state.pop("_needs_session_update", False):
+        from googleapiclient.errors import HttpError
+
+        existing_comments = st.session_state.get("raw_comments", [])
+        existing_ids = {c["comment_id"] for c in existing_comments if c.get("comment_id")}
+        latest_date = max((c.get("date", "") for c in existing_comments), default="")
+        video_ids_update = st.session_state.get("video_ids", [])
+
+        if not video_ids_update:
+            st.warning("No video IDs stored in this session — can't run update.")
+        elif not latest_date:
+            st.warning("Existing comments have no timestamps — can't determine cutoff.")
+        else:
+            youtube = get_youtube_client(api_key)
+            try:
+                videos = get_video_info(youtube, video_ids_update)
+            except HttpError as e:
+                reason = e.error_details[0]["reason"] if e.error_details else str(e)
+                st.error(f"YouTube API error: {reason}")
+                videos = []
+
+            if videos:
+                st.info(
+                    f"Fetching comments newer than **{latest_date[:10]}** "
+                    f"for **{len(videos)}** video(s)..."
+                )
+                new_comments: list[dict] = []
+                status = st.status("Fetching new comments...", expanded=True)
+                try:
+                    for video in videos:
+                        counter = status.empty()
+                        vid_label = video["title"][:50]
+                        request = youtube.commentThreads().list(
+                            part="snippet",
+                            videoId=video["video_id"],
+                            maxResults=MAX_RESULTS_PER_PAGE,
+                            textFormat="plainText",
+                            order="time",
+                        )
+                        hit_cutoff = False
+                        while request and not hit_cutoff:
+                            try:
+                                response = _api_call_with_retry(request)
+                            except Exception:
+                                break
+                            for item in response.get("items", []):
+                                thread_id = item["snippet"]["topLevelComment"]["id"]
+                                if thread_id in existing_ids:
+                                    continue
+                                snippet = item["snippet"]["topLevelComment"]["snippet"]
+                                comment_date = snippet["publishedAt"]
+                                if comment_date <= latest_date:
+                                    hit_cutoff = True
+                                    break
+                                new_comments.append({
+                                    "author": snippet["authorDisplayName"],
+                                    "comment": snippet["textDisplay"],
+                                    "likes": snippet["likeCount"],
+                                    "replies": item["snippet"]["totalReplyCount"],
+                                    "date": comment_date,
+                                    "video_id": video["video_id"],
+                                    "video_title": video["title"],
+                                    "is_reply": False,
+                                    "comment_id": thread_id,
+                                })
+                            counter.markdown(
+                                f"**{vid_label}** — {len(new_comments):,} new comments found"
+                            )
+                            request = youtube.commentThreads().list_next(request, response)
+                except HttpError as e:
+                    reason = e.error_details[0]["reason"] if e.error_details else str(e)
+                    status.write(f"API error: {reason}")
+
+                merged = new_comments + existing_comments
+                status.update(
+                    label=f"Found {len(new_comments):,} new comments. Total: {len(merged):,}.",
+                    state="complete", expanded=False,
+                )
+                st.session_state["raw_comments"] = merged
+                # Refresh local variable so downstream handlers see merged set
+                raw_comments = merged
+
+                if new_comments:
+                    _existing_multi = st.session_state.get("multi_analyses") or []
+                    if _existing_multi:
+                        st.session_state["_update_new_comments"] = new_comments
+                        st.session_state["_needs_delta_analysis"] = True
+                    else:
+                        st.session_state["_needs_auto_analysis"] = True
+                    st.success(
+                        f"Merged **{len(new_comments):,}** new comments into the current session."
+                    )
+                else:
+                    st.info("No new comments since the last pull.")
 
     # Auto-run analysis after fetch
     if st.session_state.pop("_needs_auto_analysis", False):
