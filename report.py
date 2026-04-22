@@ -716,19 +716,43 @@ def _draw_overall_summary_box(pdf: FPDF, counts: dict, total: int,
     pdf.set_y(_lbl_y + bar_lbl_h + 4)
 
     # Two-column section one-liners
+    import re as _re
     _cols_y = pdf.get_y()
     for i, s in enumerate(sections[:2]):
         col_x = box_x + padding + i * (col_w + col_gap)
+
+        # Section header with optional sentiment pill
+        _raw_ol = s.get("one_liner") or ""
+        _tag_m = _re.match(r"^\s*\[(POS|NEG|NEU)\]\s*", _raw_ol)
+        _body = _raw_ol[_tag_m.end():] if _tag_m else (_raw_ol or "—")
+
         pdf.set_xy(col_x, _cols_y)
         pdf.set_font("Lato", "B", 10)
         pdf.set_text_color(0, 188, 231)  # cyan
-        pdf.cell(col_w, section_header_h, _safe(s.get("name", "")),
-                 new_x="LMARGIN", new_y="NEXT")
-        pdf.set_xy(col_x, pdf.get_y())
+        _name = _safe(s.get("name", ""))
+        _name_w = pdf.get_string_width(_name)
+        pdf.cell(_name_w + 1, section_header_h, _name)
+
+        # Pill after the name
+        if _tag_m:
+            _tag = _tag_m.group(1)
+            _pill_label, (_pr, _pg, _pb) = _SENTIMENT_TAG_COLORS[_tag]
+            _pill_w = 16
+            _pill_h = 3.8
+            _px = col_x + _name_w + 3
+            _py = _cols_y + 0.8
+            pdf.set_fill_color(_pr, _pg, _pb)
+            pdf.rect(_px, _py, _pill_w, _pill_h, "F")
+            pdf.set_font("Lato", "B", 6.5)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_xy(_px, _py - 0.4)
+            pdf.cell(_pill_w, _pill_h + 0.8, _pill_label, align="C")
+
+        # One-liner body on next line
+        pdf.set_xy(col_x, _cols_y + section_header_h)
         pdf.set_font("Lato", "I", 10)
         pdf.set_text_color(55, 65, 81)
-        _text = s.get("one_liner") or "—"
-        pdf.multi_cell(col_w, 4.8, _safe(_text), new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(col_w, 4.8, _safe(_body), new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_y(box_y + box_h + 6)
 
@@ -1256,14 +1280,27 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
 
   // ----- Overall summary: per-section one-liners, always visible -----
   const overallEl = document.getElementById('overall-summary');
+  function splitOneLinerTag(text) {{
+    const m = String(text || '').match(/^\s*\[(POS|NEG|NEU)\]\s*(.*)$/);
+    if (!m) return {{tag: '', body: text || ''}};
+    return {{tag: m[1], body: m[2]}};
+  }}
+  function pillHTML(tag) {{
+    if (!tag) return '';
+    const label = {{POS:'POSITIVE', NEG:'NEGATIVE', NEU:'NEUTRAL'}}[tag];
+    const cls = {{POS:'pos', NEG:'neg', NEU:'neu'}}[tag];
+    return '<span class="sent-tag ' + cls + '" style="margin-left:6px;">' +
+           label + '</span>';
+  }}
   const overallCols = DATA.sections
     .filter(s => s.one_liner)
-    .map(s =>
-      '<div class="overall-col">' +
-        '<h4>' + escapeHTML(s.name) + '</h4>' +
-        '<p>' + escapeHTML(s.one_liner) + '</p>' +
-      '</div>'
-    ).join('');
+    .map(s => {{
+      const parts = splitOneLinerTag(s.one_liner);
+      return '<div class="overall-col">' +
+        '<h4>' + escapeHTML(s.name) + pillHTML(parts.tag) + '</h4>' +
+        '<p>' + escapeHTML(parts.body) + '</p>' +
+      '</div>';
+    }}).join('');
   if (overallCols) {{
     overallEl.innerHTML =
       '<div class="overall-box">' +

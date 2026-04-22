@@ -174,7 +174,11 @@ def generate_one_line_summary(comments: list[dict], section_name: str) -> str:
         f"Counts: +{counts['Positive']} positive, ~{counts['Neutral']} neutral, "
         f"-{counts['Negative']} negative.\n\n"
         f"Sample comments:\n{sample_block}\n\n"
-        "Reply with just the one sentence — no quotes, no preamble."
+        "Start your reply with a sentiment tag in square brackets: "
+        "[POS] if viewers are mostly positive, [NEG] if mostly negative, "
+        "[NEU] if mixed or neutral. Example: "
+        "\"[POS] Viewers overwhelmingly praise the dubbing quality.\" "
+        "Reply with just the one tagged sentence — no quotes, no preamble."
     )
 
     try:
@@ -1798,17 +1802,34 @@ def main():
             _ol_key = f"one_liner_{_oi}"
             if _ol_key not in st.session_state:
                 continue  # generated lazily; skip if not available yet
-            _col_lbl, _col_val, _col_btn = st.columns([0.12, 0.76, 0.12], vertical_alignment="center")
+            _ol_val = st.session_state.get(_ol_key, "")
+            # Parse optional [POS]/[NEG]/[NEU] tag so we can render it as a
+            # colored pill next to the section name.
+            _ol_tag_match = re.match(r"^\s*\[(POS|NEG|NEU)\]\s*", _ol_val)
+            _ol_pill_html = ""
+            if _ol_tag_match:
+                _tag = _ol_tag_match.group(1)
+                _label, _bg, _fg = _SENTIMENT_TAG_STYLE[_tag]
+                _ol_pill_html = (
+                    f'<span style="display:inline-block;padding:1px 8px;'
+                    f'border-radius:10px;background:{_bg};color:{_fg};'
+                    f'font-size:10px;font-weight:700;letter-spacing:0.4px;'
+                    f'margin-left:6px;vertical-align:middle;">{_label.upper()}</span>'
+                )
+            _col_lbl, _col_val, _col_btn = st.columns([0.14, 0.74, 0.12], vertical_alignment="center")
             with _col_lbl:
-                st.markdown(f"**{_ma_ol['name']}**")
+                st.html(
+                    f'<div style="font-weight:700;font-size:14px;">'
+                    f'{html_mod.escape(_ma_ol["name"])}{_ol_pill_html}</div>'
+                )
             with _col_val:
                 _new_ol = st.text_input(
                     _ma_ol["name"],
-                    value=st.session_state.get(_ol_key, ""),
+                    value=_ol_val,
                     key=f"{_ol_key}_input",
                     label_visibility="collapsed",
                 )
-                if _new_ol != st.session_state.get(_ol_key, ""):
+                if _new_ol != _ol_val:
                     st.session_state[_ol_key] = _new_ol
             with _col_btn:
                 if st.button("Regenerate", key=f"{_ol_key}_regen"):
