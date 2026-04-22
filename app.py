@@ -286,6 +286,12 @@ def main():
         flex-direction: column;
         align-items: flex-end;
     }
+    /* Compact buttons */
+    .stButton > button {
+        padding: 0.2rem 0.5rem !important;
+        font-size: 13px !important;
+        min-height: 0 !important;
+    }
     </style>
     """)
     _rainbow_bar = (
@@ -806,7 +812,6 @@ def main():
     raw_comments = st.session_state["raw_comments"]
     sq = st.session_state["search_query"]
 
-    st.html(_rainbow_bar)
     from datetime import datetime
     _export_ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     _video_titles = sorted(set(c.get("video_title", "") for c in raw_comments if c.get("video_title")))
@@ -979,12 +984,13 @@ def main():
 
             status.update(label="Delta analysis complete.", state="complete", expanded=False)
             st.session_state["multi_analyses"] = _existing_multi
-
-            _total_added = sum(
-                len([c for c in _by_name.get(an, {}).get("comments", []) if c.get("_id", -1) > max((ec.get("_id", 0) for ec in []), default=-1)])
-                for an in multi_names
-            )
+            # Ensure analyzed_comments exists so page 2 renders
+            _all_ac = []
+            for _ma in _existing_multi:
+                _all_ac.extend(_ma.get("comments", []))
+            st.session_state["analyzed_comments"] = _all_ac
             st.success(f"Added new comments to analysis tabs. Your existing overrides and translations are preserved.")
+            st.rerun()
 
     # Reanalyze trigger (button lives in sidebar, flag is set there)
     if st.session_state.pop("_needs_reanalyze", False) and "raw_comments" in st.session_state and "multi_analyses" in st.session_state:
@@ -1167,7 +1173,13 @@ def main():
             for _lbl, _grp_c in _groups.items():
                 _emoji = {"Positive": "😊", "Negative": "😞", "Neutral": "😐"}[_lbl]
                 with st.expander(f"**{_emoji} {_lbl}** — {len(_grp_c)} comments", expanded=False):
-                    for c in _grp_c:
+                    # Paginate to reduce widget count
+                    _page_size = 50
+                    _page_key = f"page_{_tidx}_{_lbl}"
+                    _current_page = st.session_state.get(_page_key, 0)
+                    _end = min((_current_page + 1) * _page_size, len(_grp_c))
+                    _displayed = _grp_c[:_end]
+                    for c in _displayed:
                         cid = c["_id"]
                         _is_skipped = cid in _hidden_f
 
@@ -1267,6 +1279,12 @@ def main():
                             _nlc = _n2c_t.get(_nld, _clc)
                             if _nlc != c.get("matched_language", "en"):
                                 c["matched_language"] = _nlc
+
+                    # Show more button
+                    if _end < len(_grp_c):
+                        _remaining = len(_grp_c) - _end
+                        if st.button(f"Show more ({_remaining:,} remaining)", key=f"more_{_tidx}_{_lbl}"):
+                            st.session_state[_page_key] = _current_page + 1
 
             st.session_state["hidden_ids"] = _hidden_f
             st.session_state["_bulk_selected"] = _bsel_f
