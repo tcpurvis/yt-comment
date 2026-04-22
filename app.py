@@ -448,10 +448,12 @@ def main():
                             st.session_state.pop("analyzed_comments", None)
 
                         # Restore multi-analysis tabs (Subtitles & Dubs)
-                        if "multi_analyses" in data:
+                        if "multi_analyses" in data and data["multi_analyses"]:
                             st.session_state["multi_analyses"] = data["multi_analyses"]
                         else:
+                            # Old-format export — auto-run analysis so tabs render
                             st.session_state["multi_analyses"] = None
+                            st.session_state["_needs_auto_analysis"] = True
 
                         # Restore custom search results
                         if "custom_search_results" in data:
@@ -650,7 +652,7 @@ def main():
                                 st.session_state["search_query"] = sq
 
                                 # Restore all existing analysis state (preserves user overrides)
-                                st.session_state["multi_analyses"] = existing_data.get("multi_analyses", [])
+                                _existing_multi = existing_data.get("multi_analyses")
                                 st.session_state["hidden_ids"] = set(existing_data.get("hidden_ids", []))
                                 st.session_state["keywords"] = existing_data.get("keywords", [])
                                 if existing_data.get("preset"):
@@ -660,10 +662,16 @@ def main():
                                 if "custom_search_results" in existing_data:
                                     st.session_state["custom_search_results"] = existing_data["custom_search_results"]
 
-                                # If there are new comments, flag for delta analysis (runs after functions defined below)
-                                if new_comments:
-                                    st.session_state["_update_new_comments"] = new_comments
-                                    st.session_state["_needs_delta_analysis"] = True
+                                if _existing_multi and len(_existing_multi) > 0:
+                                    # Existing export has tabs — delta analyze new comments only
+                                    st.session_state["multi_analyses"] = _existing_multi
+                                    if new_comments:
+                                        st.session_state["_update_new_comments"] = new_comments
+                                        st.session_state["_needs_delta_analysis"] = True
+                                else:
+                                    # Old-format export — run full analysis on merged comments
+                                    st.session_state["multi_analyses"] = None
+                                    st.session_state["_needs_auto_analysis"] = True
 
                                 st.success(
                                     f"Merged **{len(new_comments):,}** new + "
