@@ -65,6 +65,38 @@ def generate_ai_summary(comments: list[dict], search_query: str) -> str:
         return f"*Could not generate AI summary: {e}*"
 
 
+def generate_one_line_summary(comments: list[dict], section_name: str) -> str:
+    """Generate a one-sentence sentiment summary for a section using Claude Haiku."""
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    if not api_key or not comments:
+        return ""
+
+    counts = get_sentiment_counts(comments)
+    total = len(comments)
+    samples = [c.get("back_translation") or c["comment"] for c in comments[:30]]
+    sample_block = "\n".join(f"- {s[:180]}" for s in samples)
+
+    prompt = (
+        f"Summarize overall sentiment across {total} YouTube comments about "
+        f"\"{section_name}\" in ONE sentence (max 25 words). "
+        f"Counts: +{counts['Positive']} positive, ~{counts['Neutral']} neutral, "
+        f"-{counts['Negative']} negative.\n\n"
+        f"Sample comments:\n{sample_block}\n\n"
+        "Reply with just the one sentence — no quotes, no preamble."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=120,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+    except Exception:
+        return ""
+
+
 def get_youtube_client(api_key: str):
     return build("youtube", "v3", developerKey=api_key)
 
@@ -412,6 +444,13 @@ def main():
                 _tab_summaries[_k] = st.session_state[_k]
         if _tab_summaries:
             _payload_h["tab_summaries"] = _tab_summaries
+        # Per-tab one-line summaries
+        _one_liners = {}
+        for _k in list(st.session_state.keys()):
+            if _k.startswith("one_liner_") and not _k.endswith(("_input", "_regen")):
+                _one_liners[_k] = st.session_state[_k]
+        if _one_liners:
+            _payload_h["one_liners"] = _one_liners
 
         _data_h = json.dumps(_payload_h, ensure_ascii=False).encode("utf-8")
         st.sidebar.download_button(
@@ -514,6 +553,9 @@ def main():
 
                         # Restore per-tab AI summaries
                         for _k, _v in data.get("tab_summaries", {}).items():
+                            st.session_state[_k] = _v
+                        # Restore per-tab one-line summaries
+                        for _k, _v in data.get("one_liners", {}).items():
                             st.session_state[_k] = _v
 
                         _has_multi = data.get("multi_analyses") is not None and len(data.get("multi_analyses", [])) > 0
@@ -849,6 +891,8 @@ def main():
         st.session_state.pop("ai_summary", None)
         st.session_state.pop("ai_summary_0", None)
         st.session_state.pop("ai_summary_1", None)
+        st.session_state.pop("one_liner_0", None)
+        st.session_state.pop("one_liner_1", None)
         st.session_state.pop("custom_search_results", None)
         for k in ["fs_videos", "fs_sentiment", "fs_language", "fs_text_search",
                    "fs_text_exclude", "fs_min_likes", "fs_sort"]:
@@ -865,6 +909,12 @@ def main():
                     with st.spinner(f"Generating AI summary for {mr['name']}..."):
                         _sum = generate_ai_summary(mr["comments"], search_query)
                         st.session_state[_ai_key] = _sum
+                _ol_key = f"one_liner_{mi}"
+                if _ol_key not in st.session_state:
+                    with st.spinner(f"Generating one-line summary for {mr['name']}..."):
+                        st.session_state[_ol_key] = generate_one_line_summary(
+                            mr["comments"], mr["name"]
+                        )
 
     # Session Update — re-fetch newer comments for the videos already loaded in this session.
     # Fetches comments posted since the latest stored comment date for the session's videos.
@@ -1498,10 +1548,12 @@ def main():
 
             # PDF export for this search
             if _cs_vis:
+                _cs_thumb_vid = (st.session_state.get("video_ids") or [None])[0]
                 _cs_pdf = build_pdf_report(
                     _cs_vis, sq, _cs_kw,
                     ai_summary=_ai_cs,
                     preset_name=f"Custom: {', '.join(_cs_kw[:3])}",
+                    thumbnail_video_id=_cs_thumb_vid,
                 )
                 st.download_button(
                     label="Download Custom Search PDF",
@@ -1533,6 +1585,34 @@ def main():
             with _sc2:
                 if st.button("Refresh Graphs", key="refresh_graphs_btn", type="primary"):
                     st.session_state["_charts_stale"] = False
+                    st.rerun()
+
+        # One-line summaries per section (editable) — shown above the tabs
+        for _oi, _ma_ol in enumerate(multi_analyses):
+            _ol_key = f"one_liner_{_oi}"
+            if _ol_key not in st.session_state:
+                continue  # generated lazily; skip if not available yet
+            _col_lbl, _col_val, _col_btn = st.columns([0.12, 0.76, 0.12], vertical_alignment="center")
+            with _col_lbl:
+                st.markdown(f"**{_ma_ol['name']}**")
+            with _col_val:
+                _new_ol = st.text_input(
+                    _ma_ol["name"],
+                    value=st.session_state.get(_ol_key, ""),
+                    key=f"{_ol_key}_input",
+                    label_visibility="collapsed",
+                )
+                if _new_ol != st.session_state.get(_ol_key, ""):
+                    st.session_state[_ol_key] = _new_ol
+            with _col_btn:
+                if st.button("Regenerate", key=f"{_ol_key}_regen"):
+                    with st.spinner(f"Regenerating {_ma_ol['name']}..."):
+                        _new_line = generate_one_line_summary(
+                            [c for c in _ma_ol["comments"] if c["_id"] not in hidden_ids],
+                            _ma_ol["name"],
+                        )
+                    if _new_line:
+                        st.session_state[_ol_key] = _new_line
                     st.rerun()
 
         tab_names = [r["name"] for r in multi_analyses] + ["Custom Search"]
@@ -1683,12 +1763,24 @@ def main():
                 "name": ma["name"],
                 "comments": _vis_t,
                 "ai_summary": st.session_state.get(f"ai_summary_{ti}", ""),
+                "one_liner": st.session_state.get(f"one_liner_{ti}", ""),
             })
 
         if _all_vis:
             _preset_name = st.session_state.get("keyword_preset", "Custom")
+            # First stored video ID for the header thumbnail
+            _thumb_vid_pdf = None
+            _vids_pdf = st.session_state.get("video_ids") or []
+            if _vids_pdf:
+                _thumb_vid_pdf = _vids_pdf[0]
+            else:
+                for _c in st.session_state.get("raw_comments", []):
+                    if _c.get("video_id"):
+                        _thumb_vid_pdf = _c["video_id"]
+                        break
             pdf_bytes = build_pdf_report(_all_vis, sq, kws, preset_name=_preset_name,
-                                          multi_sections=_all_summaries)
+                                          multi_sections=_all_summaries,
+                                          thumbnail_video_id=_thumb_vid_pdf)
             # Stash for sidebar download button
             st.session_state["_pdf_report_bytes"] = pdf_bytes
             st.session_state["_pdf_report_filename"] = f"{_title_slug}_{_export_ts}_report.pdf"
@@ -1899,10 +1991,12 @@ def main():
                                "Click **Generate AI Summary** above to refresh.")
 
         _preset = st.session_state.get("keyword_preset", "Custom")
+        _sa_thumb_vid = (st.session_state.get("video_ids") or [None])[0]
         pdf_bytes = build_pdf_report(
             visible_comments, sq, kws,
             ai_summary=ai_summary,
             preset_name=_preset,
+            thumbnail_video_id=_sa_thumb_vid,
         )
         if summary_stale:
             st.caption("AI summary may be outdated. Regenerate before exporting for accurate results.")

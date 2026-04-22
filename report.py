@@ -1,4 +1,6 @@
 import html
+import io
+import urllib.request
 from datetime import datetime, timezone, timedelta
 
 _ET = timezone(timedelta(hours=-5))
@@ -7,6 +9,23 @@ from fpdf import FPDF
 
 from config import SENTIMENT_COLORS, THEME_PALETTE
 from analysis import get_theme_summary, get_sentiment_counts
+
+
+def _fetch_thumbnail_bytes(video_id: str) -> bytes | None:
+    """Download a YouTube thumbnail for embedding in the PDF. Tries maxres first,
+    falling back to hq. Returns None on failure so callers can skip gracefully."""
+    if not video_id:
+        return None
+    for quality in ("maxresdefault", "hqdefault"):
+        url = f"https://img.youtube.com/vi/{video_id}/{quality}.jpg"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    return resp.read()
+        except Exception:
+            continue
+    return None
 
 
 def _initials(name: str) -> str:
@@ -332,11 +351,15 @@ def build_pdf_report(
     comments: list[dict], search_query: str, keywords: list[str],
     ai_summary: str = "", preset_name: str = "",
     multi_sections: list[dict] | None = None,
+    thumbnail_video_id: str | None = None,
 ) -> bytes:
     """Build a styled PDF report grouped by sentiment.
 
-    multi_sections: if provided, list of {"name", "comments", "ai_summary"} dicts
-    for rendering multiple analysis sections (e.g. Subtitles + Dubbing).
+    multi_sections: if provided, list of {"name", "comments", "ai_summary",
+    "one_liner"} dicts for rendering multiple analysis sections (e.g.
+    Subtitles + Dubbing). When multi_sections is set, the overall sentiment
+    bar is omitted in favor of per-section bars.
+    thumbnail_video_id: YouTube video ID to fetch and embed as a header image.
     """
     sentiment_counts = get_sentiment_counts(comments)
     total = len(comments)
@@ -366,6 +389,20 @@ def build_pdf_report(
     pdf.alias_nb_pages()
     pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
+
+    # ---- Optional thumbnail at top ----
+    if thumbnail_video_id:
+        _thumb_bytes = _fetch_thumbnail_bytes(thumbnail_video_id)
+        if _thumb_bytes:
+            try:
+                _thumb_h = 45  # mm
+                _thumb_w = _thumb_h * 16 / 9
+                _x_center = (pdf.w - _thumb_w) / 2
+                pdf.image(io.BytesIO(_thumb_bytes), x=_x_center,
+                          y=pdf.get_y(), w=_thumb_w, h=_thumb_h)
+                pdf.set_y(pdf.get_y() + _thumb_h + 4)
+            except Exception:
+                pass
 
     # ---- Title: video name ----
     pdf.set_font("Lato", "B", 20)
@@ -398,27 +435,27 @@ def build_pdf_report(
     pdf.cell(0, 5, f"  {total}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(6)
 
-    # ---- Overall sentiment ----
-    pdf.set_font("Lato", "B", 13)
-    pdf.set_text_color(26, 26, 26)
-    pdf.cell(0, 8, "Overall Sentiment", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
-    _draw_sentiment_bar(pdf, sentiment_counts, total)
-    # Labels under bar segments
-    bar_w = pdf.w - 20
-    x0 = 10
-    pdf.set_font("Lato", "", 7)
-    for lbl in ["Positive", "Neutral", "Negative"]:
-        count = sentiment_counts.get(lbl, 0)
-        pct = count / total if total else 0
-        seg_w = bar_w * pct
-        if seg_w > 10:
-            sr, sg, sb = _hex_to_rgb(SENTIMENT_COLORS[lbl])
-            pdf.set_text_color(sr, sg, sb)
-            pdf.set_x(x0)
-            pdf.cell(seg_w, 5, lbl, align="C", new_x="END")
-        x0 += seg_w
-    pdf.ln(8)
+    # ---- Overall sentiment (single-analysis only; multi_sections draws per-section bars) ----
+    if not multi_sections:
+        pdf.set_font("Lato", "B", 13)
+        pdf.set_text_color(26, 26, 26)
+        pdf.cell(0, 8, "Overall Sentiment", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        _draw_sentiment_bar(pdf, sentiment_counts, total)
+        bar_w = pdf.w - 20
+        x0 = 10
+        pdf.set_font("Lato", "", 7)
+        for lbl in ["Positive", "Neutral", "Negative"]:
+            count = sentiment_counts.get(lbl, 0)
+            pct = count / total if total else 0
+            seg_w = bar_w * pct
+            if seg_w > 10:
+                sr, sg, sb = _hex_to_rgb(SENTIMENT_COLORS[lbl])
+                pdf.set_text_color(sr, sg, sb)
+                pdf.set_x(x0)
+                pdf.cell(seg_w, 5, lbl, align="C", new_x="END")
+            x0 += seg_w
+        pdf.ln(8)
 
     # ---- Determine sections to render ----
     if multi_sections:
@@ -445,7 +482,16 @@ def build_pdf_report(
             pdf.rect(10, pdf.get_y(), 4, 10, "F")
             pdf.set_x(16)
             pdf.cell(0, 10, _safe(sec_name), new_x="LMARGIN", new_y="NEXT")
-            pdf.ln(4)
+            pdf.ln(2)
+
+            # One-line summary (if provided)
+            _one_liner = section.get("one_liner", "")
+            if _one_liner:
+                pdf.set_font("Lato", "I", 10)
+                pdf.set_text_color(75, 85, 99)
+                pdf.multi_cell(pdf.w - 20, 5, _safe(_one_liner),
+                               new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(2)
 
             # Section sentiment bar
             sec_sc = get_sentiment_counts(sec_comments)
