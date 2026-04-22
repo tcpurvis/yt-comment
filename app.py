@@ -526,6 +526,9 @@ def main():
                             _parts.append(f"{len(data['custom_search_results']):,} custom search results")
                         _detail = f" · {', '.join(_parts)}" if _parts else ""
                         st.success(f"Loaded **{len(data['comments']):,}** raw comments{_detail}.")
+                        # Trigger auto-translation on the next run once the
+                        # translation helper is in scope.
+                        st.session_state["_needs_auto_translate"] = True
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to load file: {e}")
@@ -785,6 +788,27 @@ def main():
 
         return matched_a
 
+    def _auto_translate_multi(multi_results):
+        """Batch-translate non-English comments in each tab that don't already
+        have a back_translation. Modifies comments in place."""
+        to_translate = []
+        for ma in multi_results:
+            for c in ma.get("comments", []):
+                if c.get("matched_language", "en") in ("en", "all"):
+                    continue
+                if c.get("back_translation") and c["back_translation"] != c["comment"]:
+                    continue
+                to_translate.append(c)
+        if not to_translate:
+            return
+        texts = [c["comment"] for c in to_translate]
+        with st.spinner(f"Translating {len(texts):,} non-English comments..."):
+            translations = batch_back_translate(texts)
+        for c, translation in zip(to_translate, translations):
+            c["back_translation"] = translation
+            if not c.get("original_language"):
+                c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
+
     def _auto_run_subtitles_dubs(raw_comments, search_query=""):
         """Auto-run Subtitles & Dubs analysis in all languages."""
         preset_data = KEYWORD_PRESETS["Subtitles & Dubs"]
@@ -811,6 +835,10 @@ def main():
             multi_results.append({"name": analysis_name, "comments": result})
 
         status.update(label="Analysis complete.", state="complete", expanded=False)
+
+        # Auto-translate any non-English comments before storing so the cards
+        # render with translations on first page 2 load.
+        _auto_translate_multi(multi_results)
 
         st.session_state["multi_analyses"] = multi_results
         st.session_state["analyzed_comments"] = multi_results[0]["comments"] if multi_results else []
@@ -938,6 +966,14 @@ def main():
     # Auto-run analysis after fetch
     if st.session_state.pop("_needs_auto_analysis", False):
         _auto_run_subtitles_dubs(raw_comments, sq)
+        st.session_state["_charts_stale"] = False
+
+    # Auto-translate after upload (only untranslated non-English comments)
+    if st.session_state.pop("_needs_auto_translate", False):
+        _ma_auto = st.session_state.get("multi_analyses") or []
+        if _ma_auto:
+            _auto_translate_multi(_ma_auto)
+            st.session_state["multi_analyses"] = _ma_auto
 
     # Delta analysis — run only on NEW comments from Session Update, append to existing tabs
     if st.session_state.pop("_needs_delta_analysis", False):
@@ -977,6 +1013,10 @@ def main():
                     for idx, c in enumerate(new_matches):
                         c["_id"] = _max_id + 1 + idx
                     existing_tab["comments"] = existing_comments_list + new_matches
+
+            # Auto-translate any new non-English comments (existing translations
+            # are preserved; only untranslated comments are sent to the API).
+            _auto_translate_multi(_existing_multi)
 
             status.update(label="Delta analysis complete.", state="complete", expanded=False)
             st.session_state["multi_analyses"] = _existing_multi
@@ -1029,6 +1069,7 @@ def main():
                             c["back_translation"] = ov["back_translation"]
                             c["original_language"] = ov["original_language"]
                         _applied += 1
+            st.session_state["_charts_stale"] = False
             st.rerun()
 
     # --- Nothing analyzed yet ---
@@ -1055,24 +1096,6 @@ def main():
         for _ma in multi_analyses:
             _all_multi_comments.extend(_ma["comments"])
         _vis_multi = [c for c in _all_multi_comments if c["_id"] not in hidden_ids]
-
-        _m_non_english = [c for c in _vis_multi
-                          if c.get("matched_language", "en") not in ("en", "all")
-                          and (not c.get("back_translation") or c["back_translation"] == c["comment"])]
-
-        # Translate All (stays in sidebar for convenience)
-        if _m_non_english:
-            st.sidebar.header("Translations")
-            st.sidebar.caption(f"**{len(_m_non_english):,}** untranslated non-English comments")
-            if st.sidebar.button("Translate All", key="bulk_translate_multi", type="primary"):
-                texts = [c["comment"] for c in _m_non_english]
-                with st.spinner(f"Translating {len(texts):,} comments..."):
-                    translations = batch_back_translate(texts)
-                for c, translation in zip(_m_non_english, translations):
-                    c["back_translation"] = translation
-                    c["original_language"] = c.get("matched_language", detect_language(c["comment"]))
-                st.rerun()
-            st.sidebar.divider()
 
         # Sidebar Filter & Sort (applies to all tabs)
         st.sidebar.header("Filter & Sort")
@@ -1225,21 +1248,24 @@ def main():
                                          help="Mark as Positive"):
                                 c["sentiment_label"] = "Positive"
                                 c["sentiment_override"] = True
-                                st.rerun()
+                                st.session_state["_charts_stale"] = True
+                                st.rerun(scope="fragment")
                         with _tcN:
                             if st.button("😐", key=f"neu_{_tidx}_{cid}",
                                          type="primary" if _cur_sent == "Neutral" else "secondary",
                                          help="Mark as Neutral"):
                                 c["sentiment_label"] = "Neutral"
                                 c["sentiment_override"] = True
-                                st.rerun()
+                                st.session_state["_charts_stale"] = True
+                                st.rerun(scope="fragment")
                         with _tcNg:
                             if st.button("😞", key=f"neg_{_tidx}_{cid}",
                                          type="primary" if _cur_sent == "Negative" else "secondary",
                                          help="Mark as Negative"):
                                 c["sentiment_label"] = "Negative"
                                 c["sentiment_override"] = True
-                                st.rerun()
+                                st.session_state["_charts_stale"] = True
+                                st.rerun(scope="fragment")
                         with _tc2:
                             st.html(f"""
                             <div style="display:flex;gap:8px;opacity:{_op};align-items:flex-start;">
@@ -1265,9 +1291,15 @@ def main():
                             if not _is_skipped:
                                 if st.button("Skip", key=f"skip_{_tidx}_{cid}"):
                                     _hidden_f.add(cid)
+                                    st.session_state["hidden_ids"] = _hidden_f
+                                    st.session_state["_charts_stale"] = True
+                                    st.rerun(scope="fragment")
                             else:
                                 if st.button("Incl", key=f"inc_{_tidx}_{cid}"):
                                     _hidden_f.discard(cid)
+                                    st.session_state["hidden_ids"] = _hidden_f
+                                    st.session_state["_charts_stale"] = True
+                                    st.rerun(scope="fragment")
                         with _tc4:
                             _clc = c.get("matched_language", "en")
                             _cld = LANGUAGE_NAMES.get(_clc, _clc)
@@ -1278,6 +1310,18 @@ def main():
                             _nlc = _n2c_t.get(_nld, _clc)
                             if _nlc != c.get("matched_language", "en"):
                                 c["matched_language"] = _nlc
+                                # Auto-translate on language change. If the new
+                                # language is English, clear any stale translation.
+                                if _nlc in ("en", "all"):
+                                    c.pop("back_translation", None)
+                                    c.pop("original_language", None)
+                                else:
+                                    with st.spinner("Translating..."):
+                                        _translated = back_translate(c["comment"], _nlc)
+                                    c["back_translation"] = _translated
+                                    c["original_language"] = _nlc
+                                st.session_state["_charts_stale"] = True
+                                st.rerun(scope="fragment")
 
                     # Show more button
                     if _end < len(_grp_c):
@@ -1476,6 +1520,20 @@ def main():
         }
         </style>
         """)
+
+        # Stale-charts banner — shown when in-line edits (sentiment, skip,
+        # language) have changed data but the charts haven't been refreshed.
+        if st.session_state.get("_charts_stale"):
+            _sc1, _sc2 = st.columns([0.75, 0.25], vertical_alignment="center")
+            with _sc1:
+                st.warning(
+                    "Charts and AI summaries are out of date after recent edits. "
+                    "Click **Refresh Graphs** to update them."
+                )
+            with _sc2:
+                if st.button("Refresh Graphs", key="refresh_graphs_btn", type="primary"):
+                    st.session_state["_charts_stale"] = False
+                    st.rerun()
 
         tab_names = [r["name"] for r in multi_analyses] + ["Custom Search"]
         tabs = st.tabs(tab_names)
