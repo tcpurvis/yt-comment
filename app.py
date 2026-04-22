@@ -462,21 +462,61 @@ def main():
                     _has_custom = bool(data.get("custom_search_results"))
                     _parts = []
                     if _has_multi:
-                        _parts.append(f"{sum(len(m['comments']) for m in data['multi_analyses']):,} analyzed")
+                        _match_count = sum(len(m['comments']) for m in data['multi_analyses'])
+                        _parts.append(f"{_match_count:,} keyword matches")
                     if _has_custom:
-                        _parts.append(f"{len(data['custom_search_results']):,} custom search")
-                    _detail = f" ({', '.join(_parts)})" if _parts else ""
+                        _parts.append(f"{len(data['custom_search_results']):,} custom search results")
+                    _detail = f" · {', '.join(_parts)}" if _parts else ""
                     st.success(f"Loaded **{len(data['comments']):,}** raw comments{_detail}.")
                 except Exception as e:
                     st.error(f"Failed to load file: {e}")
 
-        # Re-analyze sentiment option
-        if "analyzed_comments" in st.session_state:
-            if st.button("Re-analyze sentiment (refresh with latest detection)", key="reanalyze_sent"):
-                _to_reanalyze = st.session_state["analyzed_comments"]
-                with st.spinner(f"Re-analyzing sentiment on {len(_to_reanalyze):,} comments..."):
-                    add_sentiment(_to_reanalyze)
-                st.success("Sentiment re-analyzed with latest detection.")
+        # Reprocess option — re-runs keyword matching, language detection, sentiment
+        if "raw_comments" in st.session_state:
+            if st.button("Reprocess analysis (re-match keywords, detect languages, analyze sentiment)", key="reprocess_btn"):
+                _raw = st.session_state["raw_comments"]
+
+                # Preserve manual overrides from existing results
+                _overrides: dict[str, dict] = {}  # keyed by comment_id
+                for _src in [st.session_state.get("multi_analyses"), [{"comments": st.session_state.get("analyzed_comments", [])}]]:
+                    if not _src:
+                        continue
+                    for _ma in _src:
+                        if not isinstance(_ma, dict):
+                            continue
+                        for c in _ma.get("comments", []):
+                            cid = c.get("comment_id", "")
+                            if not cid:
+                                continue
+                            override = {}
+                            if c.get("sentiment_override"):
+                                override["sentiment_label"] = c["sentiment_label"]
+                            if c.get("back_translation") and c["back_translation"] != c["comment"]:
+                                override["back_translation"] = c["back_translation"]
+                                override["original_language"] = c.get("original_language", "")
+                            _overrides[cid] = override
+
+                with st.spinner("Reprocessing..."):
+                    _auto_run_subtitles_dubs(_raw, st.session_state.get("search_query", ""))
+
+                # Re-apply manual overrides
+                _multi = st.session_state.get("multi_analyses", [])
+                _applied = 0
+                for _ma in (_multi or []):
+                    for c in _ma.get("comments", []):
+                        cid = c.get("comment_id", "")
+                        if cid in _overrides:
+                            ov = _overrides[cid]
+                            if "sentiment_label" in ov:
+                                c["sentiment_label"] = ov["sentiment_label"]
+                                c["sentiment_override"] = True
+                            if "back_translation" in ov:
+                                c["back_translation"] = ov["back_translation"]
+                                c["original_language"] = ov["original_language"]
+                            _applied += 1
+
+                if _applied:
+                    st.success(f"Reprocessed. Preserved **{_applied}** manual overrides.")
                 st.rerun()
 
     elif input_mode == "Paste video URLs":
@@ -897,7 +937,7 @@ def main():
 
         return matched_a
 
-    def _auto_run_subtitles_dubs(raw_comments):
+    def _auto_run_subtitles_dubs(raw_comments, search_query=""):
         """Auto-run Subtitles & Dubs analysis in all languages."""
         preset_data = KEYWORD_PRESETS["Subtitles & Dubs"]
         multi_names = preset_data["analyses"]
@@ -941,9 +981,18 @@ def main():
         total_matches = sum(len(r["comments"]) for r in multi_results)
         st.success(f"**{total_matches:,}** total matches across {len(multi_names)} analyses.")
 
+        # Auto-generate AI summaries for each tab
+        for mi, mr in enumerate(multi_results):
+            if mr["comments"]:
+                _ai_key = f"ai_summary_{mi}"
+                if _ai_key not in st.session_state:
+                    with st.spinner(f"Generating AI summary for {mr['name']}..."):
+                        _sum = generate_ai_summary(mr["comments"], search_query)
+                        st.session_state[_ai_key] = _sum
+
     # Auto-run analysis after fetch
     if st.session_state.pop("_needs_auto_analysis", False):
-        _auto_run_subtitles_dubs(raw_comments)
+        _auto_run_subtitles_dubs(raw_comments, sq)
 
     # --- Nothing analyzed yet ---
     if "analyzed_comments" not in st.session_state:
