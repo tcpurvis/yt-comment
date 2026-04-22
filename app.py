@@ -1419,7 +1419,12 @@ def main():
                         _rt = ""
 
                         _tr = ""
-                        if c.get("back_translation") and c.get("original_language"):
+                        _has_translation = (
+                            c.get("back_translation")
+                            and c.get("original_language")
+                            and not c.get("_hide_translation")
+                        )
+                        if _has_translation:
                             _bt = html_mod.escape(c["back_translation"])
                             _tr = (f'<div style="margin-top:4px;padding:4px 8px;background:#f0f4ff;'
                                    f'border-left:2px solid #00BCE7;border-radius:3px;font-size:12px;'
@@ -1495,6 +1500,13 @@ def main():
                                     _hidden_f.discard(cid)
                                     st.session_state["hidden_ids"] = _hidden_f
                                     st.session_state["_charts_stale"] = True
+                                    st.rerun(scope="fragment")
+                            # Toggle translation visibility
+                            if c.get("back_translation") and c.get("original_language"):
+                                _tr_label = "Show" if c.get("_hide_translation") else "Hide"
+                                if st.button(f"🌐 {_tr_label}", key=f"tr_{_tidx}_{cid}",
+                                             help="Show/hide the English translation"):
+                                    c["_hide_translation"] = not c.get("_hide_translation", False)
                                     st.rerun(scope="fragment")
                         with _tc4:
                             _clc = c.get("matched_language", "en")
