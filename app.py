@@ -292,6 +292,18 @@ def main():
         font-size: 13px !important;
         min-height: 0 !important;
     }
+    /* Pink Reanalyze button */
+    .st-key-sidebar_reanalyze_top button,
+    .st-key-sidebar_reanalyze_bulk button {
+        background-color: #E64783 !important;
+        border-color: #E64783 !important;
+        color: white !important;
+    }
+    .st-key-sidebar_reanalyze_top button:hover,
+    .st-key-sidebar_reanalyze_bulk button:hover {
+        background-color: #d13a73 !important;
+        border-color: #d13a73 !important;
+    }
     </style>
     """)
     _rainbow_bar = (
@@ -362,7 +374,11 @@ def main():
                 type="primary",
                 key="sidebar_pdf_download",
             )
-            st.sidebar.divider()
+        if st.session_state.get("multi_analyses"):
+            if st.sidebar.button("Reanalyze Data", key="sidebar_reanalyze_top", type="primary"):
+                st.session_state["_needs_reanalyze"] = True
+                st.rerun()
+        st.sidebar.divider()
 
         st.sidebar.header("Save Project")
         st.sidebar.caption("Save full session to resume later")
@@ -1298,9 +1314,6 @@ def main():
                 # Clear ALL selection checkbox keys
                 st.session_state["_sel_version"] = st.session_state.get("_sel_version", 0) + 1
                 st.rerun()
-        if st.sidebar.button("Reanalyze", key="sidebar_reanalyze_bulk"):
-            st.session_state["_needs_reanalyze"] = True
-
         # Define custom search renderer (runs on raw comments)
         # Comment cards in fragment to prevent full rerun on checkbox
         @st.fragment
