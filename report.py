@@ -975,6 +975,7 @@ def build_interactive_html_report(
                 "back_translation": c.get("back_translation", ""),
                 "original_language": c.get("original_language", ""),
                 "matched_language": c.get("matched_language", "en"),
+                "mentioned_languages": c.get("mentioned_languages", []),
                 "likes": c.get("likes", 0),
                 "replies": c.get("replies", 0),
                 "date": c.get("date", ""),
@@ -1322,8 +1323,12 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
     const ini = initials(c.author);
     const bg = avatarColor(c.author);
     const dateStr = formatDate(c.date);
-    const langPill = c.matched_language && !['en','all'].includes(c.matched_language)
-      ? '<span class="lang-pill">' + langName(c.matched_language) + '</span>' : '';
+    const allLangs = (c.mentioned_languages && c.mentioned_languages.length)
+      ? c.mentioned_languages
+      : (c.matched_language && !['en','all'].includes(c.matched_language) ? [c.matched_language] : []);
+    const langPill = allLangs.map(lc =>
+      '<span class="lang-pill">' + langName(lc) + '</span>'
+    ).join('');
     const likes = c.likes > 0 ? '<span class="likes">👍 ' + c.likes + '</span>' : '';
     const translation = c.back_translation && c.back_translation !== c.comment
       ? '<div class="translation">🌐 ' + escapeHTML(c.back_translation) + '</div>' : '';
@@ -1534,7 +1539,9 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
         if (state.lang && c.matched_language !== state.lang) return false;
         if ((c.likes || 0) < state.minLikes) return false;
         if (search) {{
-          const hay = (c.comment + ' ' + (c.back_translation || '') + ' ' + c.author).toLowerCase();
+          const langNames = (c.mentioned_languages || [c.matched_language || ''])
+            .map(lc => LANG_NAMES[lc] || lc).join(' ');
+          const hay = (c.comment + ' ' + (c.back_translation || '') + ' ' + c.author + ' ' + langNames).toLowerCase();
           if (!hay.includes(search)) return false;
         }}
         return true;

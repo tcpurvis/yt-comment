@@ -331,13 +331,18 @@ _ENGLISH_LANGUAGE_MENTION_PATTERN = re.compile(
 )
 
 
-def _find_english_language_mention(text: str) -> str | None:
-    """Return the ISO code of the first language mentioned by name in an
-    English comment, or None. Uses whole-word, case-insensitive matching."""
-    m = _ENGLISH_LANGUAGE_MENTION_PATTERN.search(text or "")
-    if m:
-        return _ENGLISH_LANGUAGE_MENTIONS[m.group(0).lower()]
-    return None
+def _find_english_language_mentions(text: str) -> list[str]:
+    """Return ISO codes for ALL languages mentioned by name in an English
+    comment. Uses whole-word, case-insensitive matching. De-duplicates while
+    preserving order of first appearance."""
+    seen: set[str] = set()
+    codes: list[str] = []
+    for m in _ENGLISH_LANGUAGE_MENTION_PATTERN.finditer(text or ""):
+        code = _ENGLISH_LANGUAGE_MENTIONS[m.group(0).lower()]
+        if code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes
 
 
 def _build_keyword_pattern(keywords: list[str]) -> re.Pattern | None:
@@ -886,10 +891,11 @@ def main():
                 if detected != "en":
                     copy["original_language"] = detected
                 else:
-                    # English comment — tag the mentioned language (e.g. "the Japanese dub")
-                    _mentioned = _find_english_language_mention(c["comment"])
-                    if _mentioned:
-                        copy["matched_language"] = _mentioned
+                    _mentions = _find_english_language_mentions(c["comment"])
+                    if _mentions:
+                        copy["matched_language"] = _mentions[0]
+                        if len(_mentions) > 1:
+                            copy["mentioned_languages"] = _mentions
                 matched_a.append(copy)
                 break
 
@@ -1409,12 +1415,17 @@ def main():
                         _ct = html_mod.escape(c["comment"])
                         _at = html_mod.escape(c["author"])
 
-                        _lc = c.get("matched_language", "en")
+                        # Build language pills — show all mentioned languages
+                        _all_langs = c.get("mentioned_languages") or []
+                        if not _all_langs:
+                            _primary_lc = c.get("matched_language", "en")
+                            if _primary_lc not in ("en", "all"):
+                                _all_langs = [_primary_lc]
                         _lt = ""
-                        if _lc not in ("en", "all"):
-                            _ll = LANGUAGE_NAMES.get(_lc, _lc)
-                            _lt = (f'<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
-                                   f'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-left:6px;">{_ll}</span>')
+                        for _alc in _all_langs:
+                            _ll = LANGUAGE_NAMES.get(_alc, _alc)
+                            _lt += (f'<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
+                                    f'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-left:4px;">{_ll}</span>')
 
                         _rt = ""
 
@@ -1581,9 +1592,11 @@ def main():
                                 if detected != "en":
                                     copy["original_language"] = detected
                                 else:
-                                    _mentioned = _find_english_language_mention(c["comment"])
-                                    if _mentioned:
-                                        copy["matched_language"] = _mentioned
+                                    _mentions = _find_english_language_mentions(c["comment"])
+                                    if _mentions:
+                                        copy["matched_language"] = _mentions[0]
+                                        if len(_mentions) > 1:
+                                            copy["mentioned_languages"] = _mentions
                                 matched.append(copy)
 
                         if matched:
@@ -1911,15 +1924,27 @@ def main():
                             with _pv_tab:
                                 st.markdown(_decorate_ai_summary(_ai_sum), unsafe_allow_html=True)
 
-                # Apply sidebar filters to this tab's comments
+                # Apply sidebar filters to this tab's comments.
+                # Search/exclude looks in the comment text, back_translation,
+                # and language tag names so keywords like "Japanese" match.
+                def _search_hay(c):
+                    parts = [c["comment"]]
+                    if c.get("back_translation"):
+                        parts.append(c["back_translation"])
+                    _lc = c.get("matched_language", "en")
+                    if _lc not in ("en", "all"):
+                        parts.append(LANGUAGE_NAMES.get(_lc, _lc))
+                    for _mlc in c.get("mentioned_languages", []):
+                        parts.append(LANGUAGE_NAMES.get(_mlc, _mlc))
+                    return " ".join(parts).lower()
                 _filtered_tab = _tab_comments
                 if _sb_text_search:
                     _ts_low = _sb_text_search.lower()
-                    _filtered_tab = [c for c in _filtered_tab if _ts_low in c["comment"].lower()]
+                    _filtered_tab = [c for c in _filtered_tab if _ts_low in _search_hay(c)]
                 if _sb_text_exclude:
                     _excl_words = [w.strip().lower() for w in _sb_text_exclude.split(",") if w.strip()]
                     _filtered_tab = [c for c in _filtered_tab
-                                     if not any(w in c["comment"].lower() for w in _excl_words)]
+                                     if not any(w in _search_hay(c) for w in _excl_words)]
                 if _sb_min_likes > 0:
                     _filtered_tab = [c for c in _filtered_tab if c.get("likes", 0) >= _sb_min_likes]
                 _sk, _sr = _sb_sort_opts[_sb_sort]
