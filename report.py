@@ -402,25 +402,6 @@ def build_pdf_report(
     pdf.set_font("Lato", "B", 11)
     pdf.set_text_color(26, 26, 26)
     pdf.cell(0, 5, f"  {total}", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(3)
-
-    # ---- Languages detected ----
-    from config import LANGUAGE_NAMES as _lc_to_name
-    _lang_counts: dict[str, int] = {}
-    for c in comments:
-        lc = c.get("matched_language", "en")
-        name = _lc_to_name.get(lc, lc)
-        _lang_counts[name] = _lang_counts.get(name, 0) + 1
-
-    if len(_lang_counts) > 1 or (len(_lang_counts) == 1 and "English" not in _lang_counts):
-        pdf.set_font("Lato", "", 8)
-        pdf.set_text_color(107, 114, 128)
-        pdf.cell(0, 5, "LANGUAGES DETECTED", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Lato", "", 9)
-        pdf.set_text_color(26, 26, 26)
-        lang_parts = [f"{name}: {count:,}" for name, count in
-                      sorted(_lang_counts.items(), key=lambda x: -x[1])]
-        pdf.cell(0, 5, "  ".join(lang_parts), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(6)
 
     # ---- Overall sentiment ----
