@@ -1329,8 +1329,9 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
       const pct = (n / total * 100).toFixed(1);
       const color = DATA.sentiment_colors[lbl];
       const labelFits = pct >= 12;
+      const shortLabel = {{Positive:'POS', Neutral:'NEU', Negative:'NEG'}}[lbl];
       const inner = labelFits
-        ? '<span class="seg-label">' + lbl.toUpperCase() + '</span>' +
+        ? '<span class="seg-label">' + shortLabel + '</span>' +
           '<span>' + n + ' · ' + pct + '%</span>'
         : (pct >= 6 ? n : '');
       bits.push(
