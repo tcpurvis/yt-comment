@@ -1196,11 +1196,6 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
   font-weight: 500; color: var(--cyan); background: #e0f7fc;
 }}
 .section-header {{ margin: 18px 0 8px; font-size: 14px; font-weight: 700; }}
-.bullet-hint {{
-  font-size: 12px; color: var(--muted); margin-bottom: 10px;
-  padding-bottom: 8px; border-bottom: 1px dashed #d1d5db;
-  font-style: italic;
-}}
 .ai-summary li.clickable {{
   cursor: pointer; padding: 2px 4px; margin-left: -4px;
   border-radius: 4px; transition: background 0.15s ease;
@@ -1472,12 +1467,8 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
 
     // One-liner is shown in the always-visible overall summary at the top of
     // the page, so it's omitted here to avoid duplication.
-    const hasClickableBullets = (sec.bullet_matches || []).some(b => (b.ids || []).length);
-    const bulletHintHTML = hasClickableBullets
-      ? '<div class="bullet-hint"><strong>[BETA]</strong> Click any bullet to filter the comments below to the ones it summarizes. Results may not be fully accurate.</div>'
-      : '';
     const aiSummaryHTML = sec.ai_summary
-      ? '<div class="ai-summary">' + bulletHintHTML +
+      ? '<div class="ai-summary">' +
         renderAISummary(sec.ai_summary, sec.bullet_matches) + '</div>' : '';
 
     panel.innerHTML =
