@@ -981,21 +981,27 @@ def main():
 
     def _backfill_summaries(multi_results, search_query=""):
         """Generate any missing per-tab AI summaries and one-liners. Safe to
-        call after upload so older exports pick up the newer UI features."""
+        call after upload so older exports pick up the newer UI features.
+        Excludes skipped (hidden) comments so summaries reflect only
+        comments the user has kept in the report."""
+        _hids = st.session_state.get("hidden_ids", set())
         for mi, mr in enumerate(multi_results):
             if not mr.get("comments"):
+                continue
+            _vis = [c for c in mr["comments"] if c.get("_id") not in _hids]
+            if not _vis:
                 continue
             _ai_key = f"ai_summary_{mi}"
             if not st.session_state.get(_ai_key):
                 with st.spinner(f"Generating AI summary for {mr['name']}..."):
                     st.session_state[_ai_key] = generate_ai_summary(
-                        mr["comments"], search_query
+                        _vis, search_query
                     )
             _ol_key = f"one_liner_{mi}"
             if not st.session_state.get(_ol_key):
                 with st.spinner(f"Generating one-line summary for {mr['name']}..."):
                     st.session_state[_ol_key] = generate_one_line_summary(
-                        mr["comments"], mr["name"]
+                        _vis, mr["name"]
                     )
 
     def _auto_run_subtitles_dubs(raw_comments, search_query="", preserve_overrides=None):
@@ -1069,19 +1075,21 @@ def main():
         total_matches = sum(len(r["comments"]) for r in multi_results)
         st.success(f"**{total_matches:,}** total matches across {len(multi_names)} analyses.")
 
-        # Auto-generate AI summaries for each tab
+        # Auto-generate AI summaries for each tab (excluding skipped comments)
+        _hids_gen = st.session_state.get("hidden_ids", set())
         for mi, mr in enumerate(multi_results):
-            if mr["comments"]:
+            _vis_gen = [c for c in mr["comments"] if c.get("_id") not in _hids_gen]
+            if _vis_gen:
                 _ai_key = f"ai_summary_{mi}"
                 if _ai_key not in st.session_state:
                     with st.spinner(f"Generating AI summary for {mr['name']}..."):
-                        _sum = generate_ai_summary(mr["comments"], search_query)
+                        _sum = generate_ai_summary(_vis_gen, search_query)
                         st.session_state[_ai_key] = _sum
                 _ol_key = f"one_liner_{mi}"
                 if _ol_key not in st.session_state:
                     with st.spinner(f"Generating one-line summary for {mr['name']}..."):
                         st.session_state[_ol_key] = generate_one_line_summary(
-                            mr["comments"], mr["name"]
+                            _vis_gen, mr["name"]
                         )
 
     # Session Update — re-fetch newer comments for the videos already loaded in this session.
