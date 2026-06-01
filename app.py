@@ -338,7 +338,9 @@ def _find_english_language_mentions(text: str) -> list[str]:
     seen: set[str] = set()
     codes: list[str] = []
     for m in _ENGLISH_LANGUAGE_MENTION_PATTERN.finditer(text or ""):
-        code = _ENGLISH_LANGUAGE_MENTIONS[m.group(0).lower()]
+        code = _ENGLISH_LANGUAGE_MENTIONS.get(m.group(0).lower())
+        if not code:
+            continue
         if code not in seen:
             seen.add(code)
             codes.append(code)
