@@ -627,7 +627,7 @@ def build_pdf_report(
             pdf.set_x(16)
             pdf.set_font("Lato", "B", 13)
             pdf.set_text_color(26, 26, 26)
-            pdf.cell(0, 8, f"{emoji_text} {label}  ({len(group)} comments)",
+            pdf.cell(0, 8, f"{emoji_text} {label}",
                      new_x="LMARGIN", new_y="NEXT")
             pdf.ln(4)
 
