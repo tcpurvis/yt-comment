@@ -450,9 +450,43 @@ def build_pdf_report(
     pdf.ln(6)
 
     # ---- Summary block ----
-    if multi_sections:
+    _is_single_section = multi_sections and len(multi_sections) == 1
+    if multi_sections and not _is_single_section:
         # Rounded overall-summary box: sentiment bar + two-column one-liners
         _draw_overall_summary_box(pdf, sentiment_counts, total, multi_sections)
+    elif _is_single_section:
+        # Single-section report (e.g. Subtitles-only): draw the bar + AI
+        # summary once here so we don't duplicate them in the section loop.
+        _sec0 = multi_sections[0]
+        _sec0_sc = get_sentiment_counts(_sec0["comments"])
+        _sec0_total = len(_sec0["comments"])
+        _draw_sentiment_bar(pdf, _sec0_sc, _sec0_total)
+        bar_w = pdf.w - 20
+        x0 = 10
+        pdf.set_font("Lato", "", 7)
+        for lbl in ["Positive", "Neutral", "Negative"]:
+            cnt = _sec0_sc.get(lbl, 0)
+            pct = cnt / _sec0_total if _sec0_total else 0
+            seg_w = bar_w * pct
+            if seg_w > 10:
+                sr, sg, sb = _hex_to_rgb(SENTIMENT_COLORS[lbl])
+                pdf.set_text_color(sr, sg, sb)
+                pdf.set_x(x0)
+                pdf.cell(seg_w, 5, lbl, align="C", new_x="END")
+            x0 += seg_w
+        pdf.ln(8)
+        _sec0_summary = _sec0.get("ai_summary", "")
+        if _sec0_summary:
+            pdf.set_font("Lato", "B", 13)
+            pdf.set_text_color(26, 26, 26)
+            pdf.cell(0, 8, "Summary", new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(2)
+            pdf.set_text_color(26, 26, 26)
+            _render_markdown_text(pdf, _sec0_summary)
+            pdf.ln(4)
+        pdf.set_draw_color(200, 200, 200)
+        pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
+        pdf.ln(8)
     else:
         # Plain-text summary for single-analysis exports
         pdf.set_font("Lato", "", 8)
@@ -506,8 +540,9 @@ def build_pdf_report(
         if not sec_comments:
             continue
 
-        # Section header for multi-analysis
-        if sec_name:
+        # Section header for multi-analysis (skip for single-section reports
+        # since the header summary was already drawn above the section loop).
+        if sec_name and not _is_single_section:
             if sec_idx > 0:
                 pdf.add_page()
             pdf.set_font("Lato", "B", 16)
@@ -547,8 +582,8 @@ def build_pdf_report(
                 x0 += seg_w
             pdf.ln(6)
 
-        # AI Summary for this section
-        if sec_summary:
+        # AI Summary for this section (skip for single-section — already above)
+        if sec_summary and not _is_single_section:
             pdf.ln(2)
             pdf.set_font("Lato", "B", 13)
             pdf.set_text_color(26, 26, 26)
@@ -558,10 +593,11 @@ def build_pdf_report(
             _render_markdown_text(pdf, sec_summary)
             pdf.ln(4)
 
-        # Divider
-        pdf.set_draw_color(200, 200, 200)
-        pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
-        pdf.ln(8)
+        if not _is_single_section:
+            # Divider between sections
+            pdf.set_draw_color(200, 200, 200)
+            pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
+            pdf.ln(8)
 
         # Sentiment-grouped comments for this section, with theme sub-groups
         _sent_rank = {"Positive": 2, "Neutral": 1, "Negative": 0}
