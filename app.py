@@ -482,6 +482,7 @@ def main():
         # Reanalyze and Regenerate summaries slots. They're filled later in
         # the run once the reports have been built.
         _pdf_btn_slot = st.sidebar.empty()
+        _pdf_subs_btn_slot = st.sidebar.empty()
         _html_btn_slot = st.sidebar.empty()
         _reanalyze_btn_slot = st.sidebar.empty()
         _regen_sum_btn_slot = st.sidebar.empty()
@@ -2078,6 +2079,24 @@ def main():
                 type="primary",
                 key="sidebar_pdf_download",
             )
+
+            # Per-section PDF downloads (Subtitles only)
+            for _si, _sec in enumerate(_all_summaries):
+                if _sec["name"] == "Subtitles & Captions" and _sec["comments"]:
+                    _subs_pdf = build_pdf_report(
+                        _sec["comments"], sq, kws,
+                        preset_name=_preset_name,
+                        multi_sections=[_sec],
+                        thumbnail_video_id=_thumb_vid_pdf,
+                    )
+                    _pdf_subs_btn_slot.download_button(
+                        label="Download Subtitles PDF",
+                        data=_subs_pdf,
+                        file_name=f"{_title_slug}_{_export_ts}_subtitles.pdf",
+                        mime="application/pdf",
+                        key="sidebar_pdf_subs_download",
+                    )
+                    break
 
             # Interactive HTML (point-in-time, self-contained, shareable)
             _html_bytes = build_interactive_html_report(
