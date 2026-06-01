@@ -151,7 +151,7 @@ def get_theme_summary(comments: list[dict]) -> dict:
     """Return {theme: [comments]} grouping."""
     themes: dict[str, list[dict]] = {}
     for c in comments:
-        themes.setdefault(c["theme"], []).append(c)
+        themes.setdefault(c.get("theme", "General"), []).append(c)
     return dict(sorted(themes.items(), key=lambda x: -len(x[1])))
 
 
