@@ -631,9 +631,10 @@ def build_pdf_report(
                      new_x="LMARGIN", new_y="NEXT")
             pdf.ln(4)
 
-            # Sort by likes desc (ties: positive > neutral > negative)
+            # Pinned first, then by likes desc (ties: positive > neutral > negative)
             group.sort(
                 key=lambda c: (
+                    1 if c.get("_pinned") else 0,
                     c.get("likes", 0),
                     _sent_rank.get(c.get("sentiment_label"), 0),
                 ),
@@ -1022,6 +1023,7 @@ def build_interactive_html_report(
                 "comment": c.get("comment", ""),
                 "back_translation": c.get("back_translation", ""),
                 "hide_translation": bool(c.get("_hide_translation", False)),
+                "pinned": bool(c.get("_pinned", False)),
                 "original_language": c.get("original_language", ""),
                 "matched_language": c.get("matched_language", "en"),
                 "mentioned_languages": c.get("mentioned_languages", []),
@@ -1400,12 +1402,16 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
       '<span class="lang-pill">' + langName(lc) + '</span>'
     ).join('');
     const likes = c.likes > 0 ? '<span class="likes">👍 ' + c.likes + '</span>' : '';
+    const pinBadge = c.pinned
+      ? '<span style="padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;color:#FF9500;background:#FFF3E0;margin-right:4px;">⭐ TOP</span>'
+      : '';
     const translation = c.back_translation && c.back_translation !== c.comment && !c.hide_translation
       ? '<div class="translation">🌐 ' + escapeHTML(c.back_translation) + '</div>' : '';
     return '<div class="card" data-id="' + c.id + '">' +
       '<div class="avatar" style="background:' + bg + ';">' + ini + '</div>' +
       '<div class="body">' +
         '<div class="row1">' +
+          pinBadge +
           '<span class="author">' + escapeHTML(c.author) + '</span>' +
           '<span class="date">' + dateStr + '</span>' +
           '<span class="badge ' + c.sentiment_label + '">' + c.sentiment_label + '</span>' +
@@ -1614,11 +1620,13 @@ header h1 {{ font-size: 28px; font-weight: 700; margin: 0; line-height: 1.15; }}
       }});
       const [field, dir] = state.sort.split('-');
       filtered.sort((a, b) => {{
+        // Pinned comments always float to the top
+        const pa = a.pinned ? 1 : 0, pb = b.pinned ? 1 : 0;
+        if (pa !== pb) return pb - pa;
         let av = field === 'date' ? (a.date || '') : (a.likes || 0);
         let bv = field === 'date' ? (b.date || '') : (b.likes || 0);
         let cmp = av < bv ? -1 : av > bv ? 1 : 0;
         if (cmp === 0) {{
-          // Tie-break on sentiment rank (most positive first when likes tie)
           cmp = (SENT_RANK[a.sentiment_label] || 0) - (SENT_RANK[b.sentiment_label] || 0);
         }}
         return dir === 'asc' ? cmp : -cmp;

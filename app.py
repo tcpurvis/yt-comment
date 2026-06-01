@@ -1473,11 +1473,11 @@ def main():
             for _lbl in ["Positive", "Neutral", "Negative"]:
                 _grp = [c for c in _comments if c["sentiment_label"] == _lbl]
                 if _grp:
-                    # Skipped comments sink to the bottom; within each
-                    # partition, sort by likes desc then sentiment rank.
+                    # Pinned first, then non-skipped, then skipped. Within
+                    # each partition, sort by likes desc then sentiment rank.
                     _grp.sort(
                         key=lambda c: (
-                            0 if c["_id"] in _hidden_f else 1,
+                            2 if c.get("_pinned") else (1 if c["_id"] not in _hidden_f else 0),
                             c.get("likes", 0),
                             _sent_rank.get(c.get("sentiment_label"), 0),
                         ),
@@ -1520,6 +1520,9 @@ def main():
                                     f'font-weight:500;color:#00BCE7;background:#e0f7fc;margin-left:4px;">{_ll}</span>')
 
                         _rt = ""
+                        if c.get("_pinned"):
+                            _rt = ('<span style="padding:1px 6px;border-radius:4px;font-size:10px;'
+                                   'font-weight:700;color:#FF9500;background:#FFF3E0;margin-right:4px;">⭐ TOP</span>')
 
                         _tr = ""
                         _has_translation = (
@@ -1613,6 +1616,12 @@ def main():
                                              help="Show/hide the English translation"):
                                     c["_hide_translation"] = not c.get("_hide_translation", False)
                                     st.rerun(scope="fragment")
+                            # Pin as top comment
+                            _pin_label = "⭐ Unpin" if c.get("_pinned") else "⭐ Pin"
+                            if st.button(_pin_label, key=f"pin_{_tidx}_{cid}",
+                                         help="Pin/unpin as a top comment"):
+                                c["_pinned"] = not c.get("_pinned", False)
+                                st.rerun(scope="fragment")
                         with _tc4:
                             _clc = c.get("matched_language", "en")
                             _cld = LANGUAGE_NAMES.get(_clc, _clc)
