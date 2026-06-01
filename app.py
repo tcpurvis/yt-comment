@@ -16,7 +16,7 @@ from report import (
 )
 
 
-def generate_ai_summary(comments: list[dict], search_query: str) -> str:
+def generate_ai_summary(comments: list[dict], search_query: str, section_name: str = "") -> str:
     """Generate an AI summary of themes using Claude."""
     api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -39,6 +39,17 @@ def generate_ai_summary(comments: list[dict], search_query: str) -> str:
             f"Sample comments:\n" + "\n".join(f"- {s}" for s in samples)
         )
 
+    topic_constraint = ""
+    if section_name:
+        topic_constraint = (
+            f"\n\nIMPORTANT: These comments were filtered for the topic "
+            f"\"{section_name}\". Your summary must ONLY discuss what viewers "
+            f"are saying about {section_name.lower()} specifically — do NOT "
+            f"summarize the video content itself, the creator, or unrelated "
+            f"topics. Every bullet point must be directly about "
+            f"{section_name.lower()}."
+        )
+
     prompt = (
         f"Analyze these YouTube comment themes from a search for \"{search_query}\".\n"
         f"Total: {total} comments | "
@@ -46,6 +57,7 @@ def generate_ai_summary(comments: list[dict], search_query: str) -> str:
         f"~{sentiment_counts['Neutral']} neutral, "
         f"-{sentiment_counts['Negative']} negative.\n\n"
         + "\n\n".join(theme_blocks)
+        + topic_constraint
         + "\n\nWrite a brief summary: one short paragraph (2-3 sentences) capturing "
         "the overall tone and what people are talking about, followed by 3-5 bullet "
         "points highlighting the most notable specific themes or patterns. "
@@ -995,7 +1007,7 @@ def main():
             if not st.session_state.get(_ai_key):
                 with st.spinner(f"Generating AI summary for {mr['name']}..."):
                     st.session_state[_ai_key] = generate_ai_summary(
-                        _vis, search_query
+                        _vis, search_query, section_name=mr["name"]
                     )
             _ol_key = f"one_liner_{mi}"
             if not st.session_state.get(_ol_key):
@@ -1083,7 +1095,7 @@ def main():
                 _ai_key = f"ai_summary_{mi}"
                 if _ai_key not in st.session_state:
                     with st.spinner(f"Generating AI summary for {mr['name']}..."):
-                        _sum = generate_ai_summary(_vis_gen, search_query)
+                        _sum = generate_ai_summary(_vis_gen, search_query, section_name=mr["name"])
                         st.session_state[_ai_key] = _sum
                 _ol_key = f"one_liner_{mi}"
                 if _ol_key not in st.session_state:
@@ -1772,7 +1784,7 @@ def main():
                 _btn_label_cs = "Regenerate AI Summary" if _ai_cs else "Generate AI Summary"
                 if st.button(_btn_label_cs, key="gen_ai_custom", type="secondary"):
                     with st.spinner("Generating summary..."):
-                        _ai_cs = generate_ai_summary(_cs_vis, sq)
+                        _ai_cs = generate_ai_summary(_cs_vis, sq, section_name="Custom Search")
                         st.session_state["ai_summary_custom"] = _ai_cs
                         st.session_state["ai_edit_custom"] = _ai_cs
                         st.rerun()
@@ -1992,7 +2004,7 @@ def main():
                     _btn_label = "Regenerate AI Summary" if _ai_sum else "Generate AI Summary"
                     if st.button(_btn_label, key=f"gen_ai_{tab_idx}", type="secondary"):
                         with st.spinner(f"Generating summary for {_tab_name}..."):
-                            _ai_sum = generate_ai_summary(_vis, sq)
+                            _ai_sum = generate_ai_summary(_vis, sq, section_name=_tab_name)
                             st.session_state[_ai_key] = _ai_sum
                             st.session_state[f"ai_edit_{tab_idx}"] = _ai_sum
                             st.rerun()
