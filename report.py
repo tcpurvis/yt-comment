@@ -315,10 +315,8 @@ def _render_markdown_text(pdf: FPDF, text: str, font_size: float = 9, line_heigh
             pdf.set_font("Lato", "", font_size)
             pdf.cell(4, line_height, chr(8226), new_x="END")  # bullet char
             line = line[2:]
-            indent_w = width - 8
         else:
             pdf.set_x(10)
-            indent_w = width
 
         # Sentiment tag pill ([POS]/[NEG]/[NEU]) — consume it if present and draw a pill
         _tag_match = _re.match(r"\[(POS|NEG|NEU)\]\s*", line)
@@ -340,29 +338,41 @@ def _render_markdown_text(pdf: FPDF, text: str, font_size: float = 9, line_heigh
             pdf.set_font("Lato", "", font_size)
             line = line[_tag_match.end():]
 
-        # Split by formatting markers: **bold**, *italic*, <u>underline</u>
-        parts = _re.split(r"(\*\*.*?\*\*|\*.*?\*|<u>.*?</u>)", line)
-        for part in parts:
-            if part.startswith("**") and part.endswith("**"):
-                pdf.set_font("Lato", "B", font_size)
-                pdf.write(line_height, part[2:-2])
-            elif part.startswith("*") and part.endswith("*") and len(part) > 2:
-                pdf.set_font("Lato", "I", font_size)
-                pdf.write(line_height, part[1:-1])
-            elif part.startswith("<u>") and part.endswith("</u>"):
-                pdf.set_font("Lato", "", font_size)
-                inner = part[3:-4]
-                # Draw underline manually
-                x_before = pdf.get_x()
-                pdf.write(line_height, inner)
-                x_after = pdf.get_x()
-                y_line = pdf.get_y() + line_height - 0.5
-                pdf.set_draw_color(26, 26, 26)
-                pdf.line(x_before, y_line, x_after, y_line)
-            else:
-                pdf.set_font("Lato", "", font_size)
-                pdf.write(line_height, part)
-        pdf.ln(line_height)
+        # For bullet lines, use multi_cell so wrapped text indents correctly
+        # under the content start rather than returning to the left margin.
+        if is_bullet:
+            content_x = pdf.get_x()
+            content_w = pdf.w - 10 - content_x
+            # Strip markdown for multi_cell (bold/italic not supported inline
+            # with multi_cell, but correct wrapping is more important).
+            plain = _re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+            plain = _re.sub(r"\*(.+?)\*", r"\1", plain)
+            plain = _re.sub(r"<u>(.+?)</u>", r"\1", plain)
+            pdf.multi_cell(content_w, line_height, _safe(plain),
+                           new_x="LMARGIN", new_y="NEXT")
+        else:
+            # Non-bullet paragraph: use write() which handles inline formatting
+            parts = _re.split(r"(\*\*.*?\*\*|\*.*?\*|<u>.*?</u>)", line)
+            for part in parts:
+                if part.startswith("**") and part.endswith("**"):
+                    pdf.set_font("Lato", "B", font_size)
+                    pdf.write(line_height, part[2:-2])
+                elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+                    pdf.set_font("Lato", "I", font_size)
+                    pdf.write(line_height, part[1:-1])
+                elif part.startswith("<u>") and part.endswith("</u>"):
+                    pdf.set_font("Lato", "", font_size)
+                    inner = part[3:-4]
+                    x_before = pdf.get_x()
+                    pdf.write(line_height, inner)
+                    x_after = pdf.get_x()
+                    y_line = pdf.get_y() + line_height - 0.5
+                    pdf.set_draw_color(26, 26, 26)
+                    pdf.line(x_before, y_line, x_after, y_line)
+                else:
+                    pdf.set_font("Lato", "", font_size)
+                    pdf.write(line_height, part)
+            pdf.ln(line_height)
 
 
 import os as _os
@@ -713,7 +723,7 @@ def _draw_overall_summary_box(pdf: FPDF, counts: dict, total: int,
                     pdf.set_text_color(26, 26, 26)
                 else:
                     pdf.set_text_color(255, 255, 255)
-                pdf.cell(seg_w, bar_h, f"{count} ({pct:.0%})", align="C")
+                pdf.cell(seg_w, bar_h, f"{pct:.0%}", align="C")
             _x += seg_w
     pdf.set_y(_bar_y + bar_h + 1)
 
@@ -799,7 +809,7 @@ def _draw_sentiment_bar(pdf: FPDF, counts: dict, total: int):
                 pdf.set_text_color(26, 26, 26)
             else:
                 pdf.set_text_color(255, 255, 255)
-            pdf.cell(seg_w, bar_h, f"{count} ({pct:.0%})", align="C")
+            pdf.cell(seg_w, bar_h, f"{pct:.0%}", align="C")
         x0 += seg_w
 
     pdf.set_y(y0 + bar_h)
